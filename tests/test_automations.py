@@ -39,11 +39,17 @@ def test_steps_dispatch_in_order_with_delay_and_template_arguments(runner):
     definition = rule(steps=[dict(type='action', action='First', args={'message': '{ttsAlias}: {ttsText}'}),
                             dict(type='delay', seconds=0.02), dict(type='action', action='Second')])
     calls = []
-    runner._post_action = lambda action, arguments: calls.append((action, arguments, time.monotonic()))
-    runner._run_steps(definition, runner._arguments('playing', dict(alias='Plankton', text='Hello')))
-    assert [item[0] for item in calls] == ['First', 'Second']
+    runner._post_action = lambda action, arguments: calls.append((action, arguments))
+    def wait(seconds):
+        calls.append(('delay', seconds))
+        return False
+    # Assert the requested delay and dispatch order, not wall-clock rounding
+    # or Windows timer resolution on a shared CI runner.
+    with patch.object(runner.stop_event, 'wait', side_effect=wait) as delay:
+        runner._run_steps(definition, runner._arguments('playing', dict(alias='Plankton', text='Hello')))
+    assert [item[0] for item in calls] == ['First', 'delay', 'Second']
     assert calls[0][1]['message'] == 'Plankton: Hello'
-    assert calls[1][2] - calls[0][2] >= 0.015
+    delay.assert_called_once_with(0.02)
 
 
 def test_delay_is_cancelled_on_shutdown(runner):
