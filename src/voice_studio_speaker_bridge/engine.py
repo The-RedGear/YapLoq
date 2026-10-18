@@ -777,7 +777,10 @@ class SpeechEngine:
                 # "Queued" now means the audio is ready. This gives external
                 # actions time to prepare an avatar/scene before playback.
                 barrier = None
-                if self.settings.streamerbot_actions_enabled and self.settings.streamerbot_queued_action.strip():
+                queued_automation = self.settings.automations_migrated and any(
+                    rule.get('enabled', True) and rule.get('legacyKey') == 'streamerbot_queued_action'
+                    for rule in self.settings.automations)
+                if queued_automation or (not self.settings.automations_migrated and self.settings.streamerbot_actions_enabled and self.settings.streamerbot_queued_action.strip()):
                     barrier = self.events.expect_action(job.speech_id)
                 self.events.emit("texttospeech", "textqueued", self._event_data(job))
                 if barrier is not None:

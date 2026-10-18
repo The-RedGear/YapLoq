@@ -28,6 +28,12 @@ $script:isPreview=$true
 $window.FindName('SaveElevenLabsButton').Add_Click({Save-ElevenLabsSettings})
 $window.FindName('ClearElevenLabsButton').Add_Click({Clear-ElevenLabsSecrets})
 Install-YapLoqShell
+$script:isPreview=$false;Set-YapLoqRuntimeControls
+foreach($name in @('HttpBox','WsBox','PersistQueueCheck')){if(-not $window.FindName($name).IsEnabled){throw 'Released app retained a preview-only restriction'}}
+$script:isPreview=$true;Set-YapLoqRuntimeControls
+foreach($name in @('HttpBox','WsBox','PersistQueueCheck')){if($window.FindName($name).IsEnabled){throw 'Development preview lost its port/recovery isolation'}}
+Update-YapLoqIntegrationStatus ([pscustomobject]@{state='listening';activePort=6670;received=30;accepted=12;rejected=18;processing=0;lastRejection='Speech queue is full (12 items)';test='passed'})
+if($StreamerRequestCounts.Text -notlike '*30 received*12 accepted*18 rejected*' -or $StreamerRequestError.Visibility -ne 'Visible' -or $StreamerListenerTestResult.Text -notlike '*Local listener passed*'){throw 'Connection diagnostics lost request counts, rejection reason or local test result'}
 if($script:credentialFields.Count -ne 13){throw 'Expected all service credentials and OBS password to have masking controls'}
 if(@($window.FindName('SaveElevenLabsButton').Resources['YapLoqCredentialNames']) -notcontains 'ElevenLabsApiKeyBox' -or @($window.FindName('ClearPollyCredentialsButton').Resources['YapLoqCredentialNames']).Count -ne 3){throw 'Credential save/clear buttons lack masking refresh handlers'}
 $credentialSettings=Read-Settings
@@ -254,11 +260,12 @@ if($script:activePage -ne 'queue' -or -not $script:unifiedQueueGrid.IsVisible){t
 Install-UiErrorHandling
 [void]$window.Dispatcher.BeginInvoke([action]{ throw [InvalidOperationException]::new('Injected UI callback failure') })
 $window.Dispatcher.Invoke([Action]{},[Windows.Threading.DispatcherPriority]::ContextIdle)
-if (-not (Test-Path (Join-Path $configDir 'ui-crashes.log'))) { throw 'UI callback failure was not recorded' }
+if (-not (Test-Path -LiteralPath (Join-Path $configDir 'ui-crashes.log'))) { throw 'UI callback failure was not recorded' }
+if((Get-Content -LiteralPath (Join-Path $configDir 'ui-crashes.log') -Raw) -notlike '*Injected UI callback failure*'){throw 'Crash log omitted the callback exception'}
 if (-not $window.IsVisible) { throw 'Recoverable UI callback failure closed the window' }
 $window.Dispatcher.Invoke([Action]{},[Windows.Threading.DispatcherPriority]::ContextIdle)
 Set-Page 'services'; Set-Page 'polly'
-if ([Windows.SystemParameters]::ClientAreaAnimation -and -not $script:sectionNav.HasAnimatedProperties) { throw 'Persistent service menu missed the page animation' }
+if ([Windows.SystemParameters]::ClientAreaAnimation -and -not $script:headerControls.HasAnimatedProperties) { throw 'Persistent service menu missed the page animation' }
 if (-not $script:servicePicker.Resources.Contains('YapLoqMotionInstalled')) { throw 'Service dropdown motion was not registered' }
 $window.UpdateLayout();$window.Dispatcher.Invoke([Action]{},[Windows.Threading.DispatcherPriority]::ContextIdle)
 $script:servicePicker.IsDropDownOpen = $true
@@ -293,10 +300,12 @@ foreach ($size in @(@(1180,760),@(980,640))) {
         Start-Sleep -Milliseconds 220
         $window.Dispatcher.Invoke([Action]{},[Windows.Threading.DispatcherPriority]::ContextIdle)
         $expected=$script:routeOwners[$route]
-        if ($PageTitle.Text -ne $expected) { throw "Wrong canonical owner for $route" }
+        $expectedTitle=if($expected -eq 'Integrations'){'Streamer.Bot'}else{$expected}
+        if ($PageTitle.Text -ne $expectedTitle) { throw "Wrong canonical owner for $route" }
         if ($route -eq 'playlists' -and -not $PlaylistGrid.IsVisible) { throw 'Playlist editor is not visible' }
         if (-not $NowPlayingBar.IsVisible) { throw "Player hidden on $route" }
-        if ($script:ownerLastPage[$expected] -ne $route) { throw 'Page state not retained' }
+        $expectedRoute=if($route -eq 'history'){'queue'}else{$route}
+        if ($script:ownerLastPage[$expected] -ne $expectedRoute) { throw 'Page state not retained' }
         if ($OutputDirectory -and $route -in @('playground','voices','queue','services','streamerbot','settings')) {
             $bitmap=[Windows.Media.Imaging.RenderTargetBitmap]::new([int]$window.ActualWidth,[int]$window.ActualHeight,96,96,[Windows.Media.PixelFormats]::Pbgra32)
             $bitmap.Render($window)
@@ -319,7 +328,7 @@ foreach ($utility in $NowPlayingHistoryButton.Parent.Children) {
 foreach ($button in $script:yaploqNav.Values) {
     if ($button.Content.Children[1].Visibility -ne 'Collapsed' -or -not $button.ToolTip) { throw 'Collapsed navigation lost icon-only labels/tooltips' }
 }
-if (-not (Get-Content (Join-Path $configDir 'ui-state.json') -Raw | ConvertFrom-Json).sidebarCollapsed) { throw 'Sidebar preference was not saved' }
+if (-not (Get-Content -LiteralPath (Join-Path $configDir 'ui-state.json') -Raw | ConvertFrom-Json).sidebarCollapsed) { throw 'Sidebar preference was not saved' }
 Show-ServiceStatusMenu $BridgeStatusButton
 $window.UpdateLayout();$window.Dispatcher.Invoke([Action]{},[Windows.Threading.DispatcherPriority]::ContextIdle)
 Start-Sleep -Milliseconds 220
@@ -340,9 +349,9 @@ $window.UpdateLayout()
 if ($script:sidebarColumn.Width.Value -ne 232 -or $script:yaploqNav.Dashboard.Content.Children[1].Visibility -ne 'Visible') { throw 'Expanded navigation did not restore page names' }
 Set-Page 'history'; Open-YapLoqRoute 'owner:Voices'; Open-YapLoqRoute 'owner:Queue'
 $window.Dispatcher.Invoke([Action]{},[Windows.Threading.DispatcherPriority]::ContextIdle)
-if ($script:activePage -ne 'history') { throw 'Queue subsection was not restored' }
+if ($script:activePage -ne 'queue') { throw 'Unified Queue view was not restored' }
 Set-Page 'voiceRules'
-if ($script:activePage -ne 'rules') { throw 'Legacy voice rule shortcut did not open the single rules workspace' }
+if ($script:activePage -ne 'routing') { throw 'Legacy voice rule shortcut did not open voice routing' }
 Set-Page 'services'
 $picker=$script:servicePicker
 for ($cycle=0;$cycle -lt 12;$cycle++) {
@@ -366,10 +375,10 @@ for ($cycle=0;$cycle -lt 12;$cycle++) {
     }
     Set-Page 'services'
 }
-if (Test-Path (Join-Path $configDir 'ui-errors.log')) { throw 'Navigation stress test logged an unexpected error' }
+if (Test-Path -LiteralPath (Join-Path $configDir 'ui-errors.log')) { throw 'Navigation stress test logged an unexpected error' }
 # A failed route must preserve the previous page and leave a diagnostic instead of terminating WPF.
 $previous=$script:activePage
 Set-Page 'unknown-test-route'
-if ($script:activePage -ne $previous -or -not(Test-Path (Join-Path $configDir 'ui-errors.log'))) { throw 'Failed navigation did not preserve the current page and log details' }
+if ($script:activePage -ne $previous -or -not(Test-Path -LiteralPath (Join-Path $configDir 'ui-errors.log'))) { throw 'Failed navigation did not preserve the current page and log details' }
 $window.Close()
 'YapLoq shell passed: six routes, unified rules, Dashboard state, 14 views at two sizes, 132 provider selections, repeated sidebar/hover events, direct service back navigation and failed-route recovery.'

@@ -1468,6 +1468,7 @@ function Set-Page([string]$page) {
     }
     if ($titles.ContainsKey($page)) { $PageTitle.Text = $titles[$page][0]; $PageSubtitle.Text = $titles[$page][1] }
     if ($script:yaploqNav) { Update-YapLoqNavigation $page }
+    if ($page -eq 'streamActions') { Start-AutomationLoad }
     if ($page -eq 'activity') { Refresh-Activity }
     if ($page -in @('queue','history')) { $script:playerStateNext = 0; $script:playerHistoryNext = 0 }
     Animate-PageHeading
@@ -2354,6 +2355,7 @@ function Refresh-ServiceState($Snapshot = $null, [bool]$FromPoll = $false) {
     } catch {}
     try {
         Update-NowPlayingBar $state $lastHistory
+        if ($script:yaploqNav) { Update-YapLoqIntegrationStatus $state.integration }
         if ($script:yaploqNav) { Update-YapLoqDashboard $state }
     } catch {
         try {
@@ -2556,7 +2558,7 @@ function Show-HistoryAudioLocation($recording=$null) {
 function Invoke-BridgePost([string]$path, $body = @{}) {
     if (-not $script:backendOnline -and [datetime]::UtcNow -lt $script:backendFailUntil) { throw 'Bridge offline' }
     try {
-        $json = $body | ConvertTo-Json -Depth 8 -Compress
+        $json = $body | ConvertTo-Json -Depth 20 -Compress
         $result = Invoke-RestMethod -Method Post -Uri ((Get-BridgeBaseUri) + $path) -ContentType 'application/json' -Body $json -TimeoutSec 8
         $script:backendOnline = $true
         $script:backendFailUntil = [datetime]::MinValue

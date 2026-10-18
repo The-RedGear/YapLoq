@@ -1484,6 +1484,11 @@
            </StackPanel>
           </Grid>
           <Button Name="SaveStreamerConnectionButton" Content="Save connection" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Left" Margin="0,14,0,0" />
+          <TextBlock Name="StreamerListenerStatus" Text="Checking listener…" Margin="0,14,0,0" TextWrapping="Wrap"/>
+          <TextBlock Name="StreamerRequestCounts" Text="UDP requests since launch: 0 received · 0 accepted · 0 rejected" Foreground="{StaticResource Muted}" Margin="0,5,0,0" TextWrapping="Wrap"/>
+          <TextBlock Name="StreamerRequestError" Foreground="#F08092" Margin="0,5,0,0" TextWrapping="Wrap" Visibility="Collapsed"/>
+          <Button Name="TestUdpListenerButton" HorizontalAlignment="Left" Margin="0,10,0,0" ToolTip="Checks YapLoq's local UDP listener without speaking"><StackPanel Orientation="Horizontal"><Path Width="14" Height="14" Stretch="Uniform" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Margin="0,0,8,0" Data="M9 16.2 4.8 12 3.4 13.4 9 19 21 7 19.6 5.6z"/><TextBlock Text="Test listener"/></StackPanel></Button>
+          <TextBlock Name="StreamerListenerTestResult" Foreground="{StaticResource Muted}" Margin="0,6,0,0" TextWrapping="Wrap" Text="For an end-to-end test, run the imported Speak action in Streamer.Bot and watch the counts and Queue."/>
           <TextBlock Text="Manual speech payload (the import sets this up for you)" Foreground="{StaticResource Muted}" Margin="0,16,0,0" />
           <TextBox Name="StreamerPayloadBox" Text="VSPEAK&#xA;%ttsAlias%&#xA;%message%&#xA;%displayName%&#xA;%userName%" Height="118" Margin="0,6,0,0" AcceptsReturn="True" VerticalContentAlignment="Top" Padding="12,10" FontFamily="Cascadia Mono" IsReadOnly="True" />
           <TextBlock Text="The selected export voice is used on line 2. Lines 4 and 5 pass %displayName% and %userName% for voice rules." Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,8,0,0" FontSize="12" />

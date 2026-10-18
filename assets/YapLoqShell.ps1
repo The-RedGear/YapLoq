@@ -1,4 +1,5 @@
 # Incremental WPF shell. Existing controls and handlers retain their state and storage.
+. (Join-Path $resourceRoot 'assets\Automations.ps1')
 function Register-YapLoqControlMotion($root) {
     # Popup children have their own presentation source and cannot inherit a page transition.
     $selector = $root
@@ -242,7 +243,7 @@ function Update-YapLoqNavigation([string]$page) {
     Close-YapLoqStatusMenu
     $owner = $script:routeOwners[$page]
     if (-not $owner) { return }
-    $script:headerControls.Parent.Visibility = if ($owner -in @('Dashboard','Integrations')) {'Collapsed'}else{'Visible'}
+    $script:headerControls.Parent.Visibility = if ($owner -eq 'Dashboard') {'Collapsed'}else{'Visible'}
     $script:ownerLastPage[$owner] = $page
     foreach ($key in $script:yaploqNav.Keys) {
         $script:yaploqNav[$key].Style = $window.FindResource($(if($key -eq $owner){'YapLoqSelectedNavButton'}else{'YapLoqNavButton'}))
@@ -1270,6 +1271,38 @@ function Install-YapLoqChrome {
     Set-YapLoqSidebarCollapsed $collapsed $false
 }
 
+function Update-YapLoqIntegrationStatus($info) {
+    if(-not $info){return}
+    $label=$window.FindName('StreamerListenerStatus')
+    $label.Text=switch($info.state){
+        'listening'{'Listening on UDP port '+$info.activePort}
+        'disabled'{'UDP listener is disabled. Enable it, save, and restart YapLoq.'}
+        'starting'{'Starting UDP listener...'}
+        'error'{[string]$info.listenerError}
+        default{'UDP listener is stopped. Save connection settings and restart YapLoq.'}
+    }
+    if($info.state -eq 'listening' -and ($UdpBox.Text.Trim() -ne [string]$info.activePort -or -not $EnableUdpCheck.IsChecked)){$label.Text+=' | Settings differ; save and restart to apply.'}
+    $window.FindName('StreamerRequestCounts').Text='UDP requests since launch: '+$info.received+' received | '+$info.accepted+' accepted | '+$info.rejected+' rejected'+$(if($info.processing){' | '+$info.processing+' processing'}else{''})
+    $errorLabel=$window.FindName('StreamerRequestError');$errorLabel.Text=if($info.lastRejection){'Last rejection: '+$info.lastRejection}else{''};$errorLabel.Visibility=if($info.lastRejection){'Visible'}else{'Collapsed'}
+    $window.FindName('TestUdpListenerButton').IsEnabled=$info.state -eq 'listening' -and $info.test -ne 'testing'
+    $window.FindName('StreamerListenerTestResult').Text=switch($info.test){
+        'testing'{'Testing local listener...'}
+        'passed'{'Local listener passed. Run the Speak action in Streamer.Bot to test the complete connection. Accepted means admitted, not finished playing; check Queue for playback results.'}
+        'timeout'{'Local listener did not respond. Check the port and restart YapLoq.'}
+        default{'Run the imported Speak action in Streamer.Bot and watch the counts and Queue. Accepted requests may still be generating or waiting.'}
+    }
+}
+
+function Set-YapLoqRuntimeControls {
+    foreach ($name in @('HttpBox','WsBox','PersistQueueCheck')) {
+        $control = $window.FindName($name)
+        if ($control) {
+            $control.IsEnabled = -not $script:isPreview
+            $control.ToolTip = if($script:isPreview){'Development preview uses isolated ports and disables queue recovery.'}else{'Restart YapLoq after changing connection or recovery settings.'}
+        }
+    }
+}
+
 function Install-YapLoqShell {
     # Resolve these explicitly: production startup exports only selected controls.
     $PageHeadingHost = $window.FindName('PageHeadingHost')
@@ -1421,6 +1454,7 @@ function Install-YapLoqShell {
     Install-YapLoqVoiceContextMenu
     Install-YapLoqPageContextMenus
     Install-YapLoqStreamerExpanders
+    Install-YapLoqAutomations
     foreach ($spec in @(@('AudioSettingsExpander','mdi:speaker'),@('LocalApiSettingsExpander','mdi:api'),@('LimitsSettingsExpander','mdi:speedometer'),@('WindowSettingsExpander','mdi:window-maximize'),@('DataSupportSettingsExpander','mdi:database-cog'))) {
         $section=$window.FindName($spec[0]); if(-not $section){continue}
         $header=[Windows.Controls.StackPanel]::new(); $header.Orientation='Horizontal'
@@ -1461,10 +1495,11 @@ function Install-YapLoqShell {
         }
     })
     $NowPlayingStopClearButton.ToolTip = 'Stop playback and clear waiting speech (Ctrl+Shift+S)'
-    foreach ($name in @('HttpBox','WsBox','PersistQueueCheck')) {
-        $control = $window.FindName($name)
-        if ($control) { $control.IsEnabled = $false; $control.ToolTip = 'Preview keeps desktop ports isolated; recovery and automatic updates are disabled.' }
-    }
+    $window.FindName('TestUdpListenerButton').Add_Click({
+        try{Invoke-BridgePost '/api/integrations/udp-test' @{} | Out-Null;$window.FindName('StreamerListenerTestResult').Text='Testing local listener...';$script:playerStateNext=0}
+        catch{$window.FindName('StreamerListenerTestResult').Text=$_.Exception.Message}
+    })
+    Set-YapLoqRuntimeControls
     $PageHeadingHost.Margin = '0'; $PageHeadingHost.Parent.Margin = '0,0,0,12'
     Set-Page 'playground'
     Register-YapLoqControlMotion $window

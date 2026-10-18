@@ -1,0 +1,42 @@
+<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Margin="0,0,8,0">
+ <Grid.Resources>
+  <Style x:Key="Pane" TargetType="Border"><Setter Property="Background" Value="#1E1A27"/><Setter Property="BorderBrush" Value="#50485C"/><Setter Property="BorderThickness" Value="1"/><Setter Property="CornerRadius" Value="10"/><Setter Property="Padding" Value="12"/></Style>
+  <Style TargetType="ListBox" BasedOn="{StaticResource {x:Type ListBox}}"><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ListBox"><Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"><ScrollViewer Focusable="False" Padding="{TemplateBinding Padding}"><ItemsPresenter/></ScrollViewer></Border></ControlTemplate></Setter.Value></Setter></Style>
+ </Grid.Resources>
+ <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+ <Grid>
+  <Grid.ColumnDefinitions><ColumnDefinition Width="1*" MinWidth="220"/><ColumnDefinition Width="12"/><ColumnDefinition Width="2*" MinWidth="400"/></Grid.ColumnDefinitions>
+  <Border Style="{StaticResource Pane}"><Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+   <StackPanel Margin="0,0,0,8">
+    <TextBlock Text="Actions" FontWeight="SemiBold" Margin="0,0,0,8"/>
+    <StackPanel Orientation="Horizontal"><Button Name="AutomationNew" Content="Add action" Height="32" Padding="8,5" Margin="0,0,4,0"/><Button Name="AutomationDuplicate" Content="Duplicate" Width="32" Height="32" Padding="7" Margin="0,0,4,0"/><Button Name="AutomationDelete" Content="Remove" Width="32" Height="32" Padding="7"/></StackPanel>
+   </StackPanel>
+   <Grid Grid.Row="1" Margin="0,0,0,8"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+    <Grid><TextBox Name="AutomationSearch" Height="32" ToolTip="Search actions"/><TextBlock Text="Search actions..." Foreground="#B9B2C2" Margin="12,0" VerticalAlignment="Center" IsHitTestVisible="False"><TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding Text, ElementName=AutomationSearch}" Value=""><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock></Grid>
+    <Button Name="AutomationUp" Grid.Column="1" Width="30" Height="32" Padding="7" Margin="5,0,3,0"/><Button Name="AutomationDown" Grid.Column="2" Width="30" Height="32" Padding="7"/>
+   </Grid>
+   <Grid Grid.Row="2"><ListBox Name="AutomationList" DisplayMemberPath="name" BorderThickness="0" Background="#15131D" ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
+    <StackPanel Name="AutomationEmpty" VerticalAlignment="Center" Margin="12"><TextBlock Text="No actions yet" HorizontalAlignment="Center" FontWeight="SemiBold"/><TextBlock Text="Add an action, then choose its triggers and steps." TextWrapping="Wrap" TextAlignment="Center" Foreground="#B9B2C2" Margin="0,8,0,12"/><Button Name="AutomationEmptyAdd" Content="Add action" HorizontalAlignment="Center"/></StackPanel>
+   </Grid>
+  </Grid></Border>
+  <GridSplitter Grid.Column="1" Width="4" HorizontalAlignment="Center" Background="#50485C" ResizeDirection="Columns" ResizeBehavior="PreviousAndNext"/>
+  <Grid Grid.Column="2" Name="AutomationEditor">
+   <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="10"/><RowDefinition Height="0.7*" MinHeight="112"/><RowDefinition Height="10"/><RowDefinition Height="1.3*" MinHeight="155"/></Grid.RowDefinitions>
+   <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBox Name="AutomationName" ToolTip="Action name" Height="36"/><CheckBox Name="AutomationEnabled" Grid.Column="1" Content="Enabled" VerticalAlignment="Center" Margin="10,0"/><Button Name="AutomationSave" Grid.Column="2" Content="Save actions" Height="36" Padding="10,6"/></Grid>
+   <Border Name="AutomationTriggerPane" Grid.Row="2" Style="{StaticResource Pane}"><Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+    <Grid Margin="0,0,0,8"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="Triggers" FontWeight="SemiBold" Margin="0,0,12,0" VerticalAlignment="Center"/><ComboBox Name="AutomationTriggerPicker" Grid.Column="1" Height="32" DisplayMemberPath="label" ToolTip="Choose an event trigger"/><Button Name="AutomationTriggerAdd" Grid.Column="2" Content="Add" Height="32" Padding="8,5" Margin="6,0,4,0"/><Button Name="AutomationTriggerRemove" Grid.Column="3" Content="Remove" Width="32" Height="32" Padding="7"/></Grid>
+    <ListBox Name="AutomationTriggers" Grid.Row="1" BorderThickness="0" Background="#15131D"><ListBox.ItemTemplate><DataTemplate><TextBlock Text="{Binding caption}" Margin="4,3"/></DataTemplate></ListBox.ItemTemplate></ListBox>
+   </Grid></Border>
+   <GridSplitter Grid.Row="3" Height="4" HorizontalAlignment="Stretch" VerticalAlignment="Center" Background="#50485C" ResizeDirection="Rows" ResizeBehavior="PreviousAndNext"/>
+   <Border Name="AutomationStepPane" Grid.Row="4" Style="{StaticResource Pane}"><Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+    <DockPanel Margin="0,0,0,8" LastChildFill="True"><StackPanel Orientation="Horizontal" DockPanel.Dock="Right"><Button Name="AutomationStepAdd" Content="Add" Height="32" Padding="9,5" Margin="0,0,4,0"/><Button Name="AutomationStepEdit" Width="30" Height="32" Padding="7" Margin="0,0,4,0"/><Button Name="AutomationStepRemove" Width="30" Height="32" Padding="7" Margin="0,0,4,0"/><Button Name="AutomationStepUp" Width="30" Height="32" Padding="7" Margin="0,0,4,0"/><Button Name="AutomationStepDown" Width="30" Height="32" Padding="7"/></StackPanel><TextBlock Text="Sub-actions" FontWeight="SemiBold" VerticalAlignment="Center"/></DockPanel>
+    <DataGrid Name="AutomationSteps" Grid.Row="1" AutoGenerateColumns="False" CanUserAddRows="False" CanUserSortColumns="False" SelectionMode="Single" BorderThickness="0"><DataGrid.Columns><DataGridCheckBoxColumn Header="ON" Binding="{Binding enabled}" Width="55"/><DataGridTextColumn Header="TYPE" Binding="{Binding type}" Width="75" IsReadOnly="True"/><DataGridTextColumn Header="ACTION / DELAY" Binding="{Binding Summary}" Width="*" IsReadOnly="True"/></DataGrid.Columns></DataGrid>
+    <Expander Grid.Row="2" Header="Action options" ToolTip="Failure behavior and conditions" Margin="0,8,0,0"><ScrollViewer MaxHeight="170" VerticalScrollBarVisibility="Auto"><StackPanel>
+     <Grid Margin="0,6,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/></Grid.ColumnDefinitions><TextBlock Text="On failure" Margin="0,0,10,0" VerticalAlignment="Center"/><ComboBox Name="AutomationOnError" Grid.Column="1" Height="30"><ComboBoxItem Content="Stop this action" Tag="stop"/><ComboBoxItem Content="Continue with next step" Tag="continue"/></ComboBox></Grid>
+     <StackPanel Orientation="Horizontal" Margin="0,8,0,6"><Button Name="AutomationConditionAdd" Content="Add condition" Height="30" Padding="8,4" Margin="0,0,6,0"/><Button Name="AutomationConditionRemove" Content="Remove" Height="30" Padding="8,4"/></StackPanel><DataGrid Name="AutomationConditions" Height="80" AutoGenerateColumns="False" CanUserAddRows="False" SelectionMode="Single" ToolTip="All conditions must match"><DataGrid.Columns><DataGridComboBoxColumn Header="FIELD" SelectedItemBinding="{Binding field}" Width="100"/><DataGridComboBoxColumn Header="MATCH" SelectedItemBinding="{Binding op}" Width="110"/><DataGridTextColumn Header="VALUE" Binding="{Binding value}" Width="*"/></DataGrid.Columns></DataGrid>
+    </StackPanel></ScrollViewer></Expander>
+   </Grid></Border>
+  </Grid>
+ </Grid>
+ <TextBlock Name="AutomationStatus" Grid.Row="1" Text="Select an action or add one." Foreground="#B9B2C2" TextTrimming="CharacterEllipsis" Margin="0,8,0,0"/>
+</Grid>

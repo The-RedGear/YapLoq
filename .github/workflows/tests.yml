@@ -27,3 +27,6 @@ jobs:
       - name: Verify update window and installer scripts
         shell: powershell
         run: powershell.exe -STA -NoProfile -ExecutionPolicy Bypass -File tests/test_updates_ui.ps1
+      - name: Verify automation workspace
+        shell: powershell
+        run: powershell.exe -STA -NoProfile -ExecutionPolicy Bypass -File tests/test_automations_ui.ps1

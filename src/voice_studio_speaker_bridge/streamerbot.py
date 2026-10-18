@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from queue import Empty, Queue
 from threading import Event, RLock, Thread, Timer
 from urllib.request import Request, urlopen
 
 from .events import EventBus
 from .settings import Settings
+from .automations import matches_conditions, validate_rules
 
 
 class StreamerBotActions:
@@ -48,6 +50,8 @@ class StreamerBotActions:
             self.thread.start()
 
     def shutdown(self) -> None:
+        if self.settings.automations_migrated:
+            self.stop_event.set()
         finish = None
         with self.state_lock:
             if self.finish_timer is not None:
@@ -62,11 +66,19 @@ class StreamerBotActions:
         self.stop_event.set()
 
     def _on_event(self, source: str, event_type: str, data: dict) -> None:
+        if data.get('automationOrigin'):
+            return
+        self.settings.reload_if_changed()
+        for rule in self.settings.automations:
+            if (rule.get('enabled', True) and not rule.get('legacyKey')
+                    and any(t.get('source') == source and t.get('event') == event_type for t in rule.get('triggers', []))
+                    and matches_conditions(rule, data)):
+                self.pending.put((rule, self._arguments(event_type, data)))
         if source == "integrationtest":
             self.settings.reload_if_changed()
             mapped = self.EXTRA_EVENT_SETTINGS.get(event_type) or self.EVENT_SETTINGS.get(event_type)
-            if mapped and self.settings.streamerbot_actions_enabled:
-                action = str(getattr(self.settings, mapped[1], "")).strip()
+            if mapped and self._actions_enabled():
+                action = self._configured_action(mapped[1])
                 if action:
                     self.pending.put((action, self._arguments(mapped[0], data)))
             return
@@ -74,11 +86,11 @@ class StreamerBotActions:
             return
         self.settings.reload_if_changed()
         extra = self.EXTRA_EVENT_SETTINGS.get(event_type)
-        if extra and self.settings.streamerbot_actions_enabled:
-            action = str(getattr(self.settings, extra[1], "")).strip()
+        if extra and self._actions_enabled():
+            action = self._configured_action(extra[1])
             if action:
                 self.pending.put((action, self._arguments(extra[0], data)))
-        if event_type == "received" and self.settings.streamerbot_actions_enabled:
+        if event_type == "received" and self._actions_enabled():
             with self.state_lock:
                 self.active_speech_ids.add(str(data.get("id", "")))
             self._cancel_finished_timer()
@@ -87,7 +99,7 @@ class StreamerBotActions:
         if mapped is None:
             return
         self.settings.reload_if_changed()
-        if not self.settings.streamerbot_actions_enabled:
+        if not self._actions_enabled():
             if event_type == "textqueued":
                 self.events.acknowledge_action(str(data.get("id", "")))
             return
@@ -123,7 +135,7 @@ class StreamerBotActions:
                     self.batch_queued_announced = False
             if not queue_is_idle:
                 return
-        action = str(getattr(self.settings, setting_name, "")).strip()
+        action = self._configured_action(setting_name)
         if not action and state == "queued":
             self.events.acknowledge_action(speech_id)
         if action:
@@ -136,7 +148,7 @@ class StreamerBotActions:
                 self.pending.put((action, arguments))
 
     def _schedule_finished(self, action: str, arguments: dict) -> None:
-        delay = max(0.0, min(10.0, float(self.settings.streamerbot_finished_delay)))
+        delay = 0.0 if isinstance(action, dict) else max(0.0, min(10.0, float(self.settings.streamerbot_finished_delay)))
         self._cancel_finished_timer()
         if delay <= 0:
             self.pending.put((action, arguments))
@@ -174,7 +186,55 @@ class StreamerBotActions:
             "ttsSource": str(data.get("source", "")),
             "ttsUser": str(data.get("user", "")),
             "ttsDuration": float(data.get("duration", 0.0) or 0.0),
+            "ttsEngine": str(data.get('engineName', '')),
+            "ttsError": str(data.get('error', data.get('message', ''))),
+            "ttsIntegration": str(data.get('integration', '')),
         }
+
+    def _actions_enabled(self):
+        if self.settings.automations_migrated:
+            return any(rule.get('enabled', True) and rule.get('legacyKey') for rule in self.settings.automations)
+        return self.settings.streamerbot_actions_enabled
+
+    def _configured_action(self, key):
+        if self.settings.automations_migrated:
+            rules = [rule for rule in self.settings.automations if rule.get('legacyKey') == key and rule.get('enabled', True)]
+            return dict(legacyKey=key, rules=rules) if rules else ''
+        return str(getattr(self.settings, key, '')).strip()
+
+    def _run_steps(self, rule, arguments):
+        if 'rules' in rule:
+            for child in rule['rules']:
+                self._run_steps(child, arguments)
+            return
+        rule = validate_rules([rule])[0]
+        data = dict(alias=arguments.get('ttsAlias'), source=arguments.get('ttsSource'), user=arguments.get('ttsUser'),
+                    voiceName=arguments.get('ttsVoice'), engineName=arguments.get('ttsEngine'),
+                    id=arguments.get('ttsId'), text=arguments.get('ttsText'), integration=arguments.get('ttsIntegration'))
+        if not matches_conditions(rule, data):
+            return
+        for step in rule['steps']:
+            if self.stop_event.is_set():
+                return
+            if not step.get('enabled', True):
+                continue
+            if rule.get('legacyKey') == 'streamerbot_finished_action' and self.active_speech_ids:
+                return
+            try:
+                if step['type'] == 'delay':
+                    if self.stop_event.wait(step['seconds']):
+                        return
+                else:
+                    args = dict(arguments)
+                    for key, value in step.get('args', {}).items():
+                        if isinstance(value, str):
+                            value = re.sub(r'\{(tts\w+)\}', lambda match: str(arguments.get(match[1], match[0])), value)
+                        args[key] = value
+                    self._post_action(step['action'], args)
+            except Exception:
+                self.events.emit('automation', 'failed', {'automationId': rule['id'], 'step': rule['steps'].index(step) + 1, 'automationOrigin': True})
+                if rule['onError'] != 'continue':
+                    raise
 
     def _run(self) -> None:
         while not self.stop_event.is_set():
@@ -189,15 +249,20 @@ class StreamerBotActions:
             delivered = False
             try:
                 with self.state_lock:
-                    if arguments.get("ttsState") in {"finished", "cancelled", "error"} and self.active_speech_ids:
+                    generic = isinstance(action, dict) and not action.get('legacyKey')
+                    if not generic and arguments.get("ttsState") in {"finished", "cancelled", "error"} and self.active_speech_ids:
                         continue
-                    if arguments.get("ttsState") in {"queued", "playing"} and arguments.get("ttsId") != "lifecycle-test" and arguments.get("ttsId") not in self.active_speech_ids:
+                    if not generic and arguments.get("ttsState") in {"queued", "playing"} and arguments.get("ttsId") != "lifecycle-test" and arguments.get("ttsId") not in self.active_speech_ids:
                         continue
-                self._post_action(action, arguments)
+                if isinstance(action, dict):
+                    self._run_steps(action, arguments)
+                    self.events.emit('automation', 'dispatched', {'automationId': action.get('id', action.get('legacyKey', '')), 'automationOrigin': True})
+                else:
+                    self._post_action(action, arguments)
                 delivered = True
             except Exception:
                 logging.exception("Could not run Streamer.bot lifecycle action %s", action)
-                self.events.emit("integration", "error", {"integration": "Streamer.bot", "id": arguments.get("ttsId", "")})
+                self.events.emit("integration", "error", {"integration": "Streamer.bot", "id": arguments.get("ttsId", ""), 'automationOrigin': True})
             finally:
                 if arguments.get("ttsState") == "queued":
                     self.events.acknowledge_action(str(arguments.get("ttsId", "")), delivered)

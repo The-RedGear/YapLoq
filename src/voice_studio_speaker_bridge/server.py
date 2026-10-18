@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import logging
 import os
 import hmac
 import socketserver
+import socket
+import time
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Lock, Thread
 
@@ -26,6 +29,7 @@ from .obs import ObsClient
 from .secrets import unprotect_windows_secret
 from .channel import is_preview
 from .updates import UpdateManager, installed_version
+from .automations import CATALOG, FIELDS, effective_rules, validate_rules, remote_actions
 
 
 @dataclass
@@ -56,6 +60,41 @@ class BridgeServers:
         self.ws_thread: Thread | None = None
         self.udp_thread: Thread | None = None
         self.http_thread: Thread | None = None
+        self._udp_status_lock = Lock()
+        self._udp_status = dict(received=0, accepted=0, rejected=0, processing=0,
+                                lastReceivedAt='', lastRejection='', listenerError='')
+        self._udp_test_id = ''
+        self._udp_test_started = 0.0
+        self._udp_test_result = 'idle'
+
+    def integration_status(self) -> dict:
+        with self._udp_status_lock:
+            status = dict(self._udp_status)
+            if self._udp_test_result == 'testing' and time.monotonic() - self._udp_test_started > 3:
+                self._udp_test_result = 'timeout'
+            status['test'] = self._udp_test_result
+        server = self.udp_server
+        enabled = bool(getattr(self.settings, 'enable_udp', False))
+        status.update(enabled=enabled, configuredPort=getattr(self.settings, 'udp_port', 6670),
+                      activePort=server.server_address[1] if server else None,
+                      state='listening' if server else ('error' if status['listenerError'] else
+                            ('starting' if enabled and self.udp_thread and self.udp_thread.is_alive() else 'disabled' if not enabled else 'stopped')))
+        return status
+
+    def test_udp_listener(self) -> dict:
+        server = self.udp_server
+        if server is None:
+            raise ValueError('The UDP listener is not running. Enable it, save, and restart YapLoq.')
+        token = uuid.uuid4().hex
+        with self._udp_status_lock:
+            self._udp_test_id = token
+            self._udp_test_started = time.monotonic()
+            self._udp_test_result = 'testing'
+        address, port = server.server_address
+        target = '127.0.0.1' if address == '0.0.0.0' else address
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
+            client.sendto(('YPING\n' + token).encode(), (target, port))
+        return {'state': 'testing'}
 
     def start(self) -> None:
         self.http_thread = Thread(target=self._run_http, name="HTTP server", daemon=True)
@@ -114,6 +153,20 @@ class BridgeServers:
                 if path == "/api/events":
                     self._reply(200, {"ok": True, "events": bridge.events.recent()})
                     return
+                if path == '/api/integrations/status':
+                    self._reply(200, {'ok': True, 'result': bridge.integration_status()})
+                    return
+                if path == '/api/automations':
+                    bridge.settings.reload_if_changed()
+                    self._reply(200, {'ok': True, 'result': {'rules': effective_rules(bridge.settings), 'events': CATALOG, 'fields': FIELDS, 'migrated': bridge.settings.automations_migrated}})
+                    return
+                if path == '/api/automations/actions':
+                    try:
+                        bridge.settings.reload_if_changed()
+                        self._reply(200, {'ok': True, 'result': remote_actions(bridge.settings)})
+                    except Exception:
+                        self._reply(502, {'ok': False, 'error': 'Could not load Streamer.Bot actions. Check its HTTP server and the saved address in Connection.'})
+                    return
                 if path == "/api/updates":
                     self._reply(200, {"ok": True, "result": bridge.updates.status()})
                     return
@@ -130,7 +183,9 @@ class BridgeServers:
                         for provider in registry.providers.values()]})
                     return
                 if path == "/api/state":
-                    self._reply(200, {"ok": True, "result": bridge.protocol.execute("GetState", {})})
+                    result = bridge.protocol.execute("GetState", {})
+                    result['integration'] = bridge.integration_status()
+                    self._reply(200, {"ok": True, "result": result})
                     return
                 if path == "/api/history":
                     self._reply(200, {"ok": True, "result": bridge.protocol.execute("GetHistory", {})})
@@ -191,9 +246,11 @@ class BridgeServers:
                           "/api/queue/move": "MoveSpeech", "/api/queue/reorder": "ReorderSpeech"}
                 command = routes.get(self.path.rstrip("/"))
                 is_streamerbot_test = self.path.rstrip("/") == "/api/integrations/streamerbot/test"
+                is_udp_test = self.path.rstrip('/') == '/api/integrations/udp-test'
+                is_automation_save = self.path.rstrip('/') == '/api/automations/save'
                 output_test = self.path.rstrip("/") == "/api/output/test"
                 maintenance_action = self.path.rstrip("/").removeprefix("/api/maintenance/") if self.path.startswith("/api/maintenance/") else ""
-                if command is None and not is_streamerbot_test and not maintenance_action and not output_test:
+                if command is None and not is_streamerbot_test and not is_udp_test and not is_automation_save and not maintenance_action and not output_test:
                     self._reply(404, {"ok": False, "error": "Not found"})
                     return
                 try:
@@ -204,6 +261,18 @@ class BridgeServers:
                     data = json.loads(raw.decode("utf-8"))
                     if not isinstance(data, dict):
                         raise ValueError("JSON body must be an object")
+                    if is_automation_save:
+                        rules = validate_rules(data.get('rules'))
+                        maintenance = Maintenance(bridge.settings)
+                        maintenance.backup()
+                        bridge.settings.automations = rules
+                        bridge.settings.automations_migrated = True
+                        bridge.settings.save()
+                        self._reply(200, {'ok': True, 'result': {'rules': rules}})
+                        return
+                    if is_udp_test:
+                        self._reply(200, {'ok': True, 'result': bridge.test_udp_listener()})
+                        return
                     if output_test:
                         job = bridge.protocol.engine.test_output(str(data.get("device", "")), bool(data.get("preview", False)))
                         self._reply(200, {"ok": True, "result": {"speechId": job.speech_id}})
@@ -364,6 +433,20 @@ class BridgeServers:
 
         class Handler(socketserver.BaseRequestHandler):
             def handle(self):
+                # A loopback probe checks transport without admitting speech or
+                # changing production request counts.
+                if self.request[0].startswith(b'YPING\n'):
+                    token = self.request[0][6:].decode('ascii', errors='ignore').strip()
+                    with bridge._udp_status_lock:
+                        if token == bridge._udp_test_id and token:
+                            bridge._udp_test_result = 'passed'
+                    return
+                with bridge._udp_status_lock:
+                    bridge._udp_status['received'] += 1
+                    bridge._udp_status['processing'] += 1
+                    bridge._udp_status['lastReceivedAt'] = datetime.now(timezone.utc).isoformat()
+                accepted = False
+                reason = ''
                 try:
                     raw = self.request[0].decode("utf-8").strip()
                     lines = raw.splitlines()
@@ -443,8 +526,22 @@ class BridgeServers:
                         data = json.loads(raw)
                         command = str(data.get("command", ""))
                     bridge.protocol.execute(command, data)
-                except Exception:
-                    logging.exception("Invalid UDP request")
+                    accepted = True
+                except Exception as exc:
+                    reason = ('Malformed UDP packet. Check the exported action payload.'
+                              if isinstance(exc, (UnicodeError, json.JSONDecodeError)) else
+                              str(exc)[:240] if isinstance(exc, ValueError) else
+                              'Request failed. Check YapLoq diagnostics.')
+                    if isinstance(exc, (ValueError, UnicodeError)):
+                        logging.warning('UDP request rejected: %s', reason)
+                    else:
+                        logging.exception('UDP request failed')
+                finally:
+                    with bridge._udp_status_lock:
+                        bridge._udp_status['processing'] -= 1
+                        bridge._udp_status['accepted' if accepted else 'rejected'] += 1
+                        if not accepted:
+                            bridge._udp_status['lastRejection'] = reason
 
         class ExclusiveUDPServer(socketserver.ThreadingUDPServer):
             # A reused UDP port delivers the same Streamer.bot broadcast to
@@ -453,10 +550,14 @@ class BridgeServers:
 
         try:
             with ExclusiveUDPServer((self.settings.udp_address, self.settings.udp_port), Handler) as server:
+                with self._udp_status_lock:
+                    self._udp_status['listenerError'] = ''
                 self.udp_server = server
                 logging.info("UDP server listening on udp://%s:%d", self.settings.udp_address, self.settings.udp_port)
                 server.serve_forever()
-        except OSError:
+        except OSError as exc:
+            with self._udp_status_lock:
+                self._udp_status['listenerError'] = f'Cannot listen on UDP port {self.settings.udp_port}. Another app may be using it. ({exc})'
             logging.exception("Could not start UDP server")
         finally:
             self.udp_server = None

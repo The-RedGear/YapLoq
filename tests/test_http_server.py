@@ -42,6 +42,53 @@ class HttpServerTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertIn("EventVoice", result["aliases"])
 
+    def test_automations_project_legacy_without_mutating_then_save_with_backup(self):
+        self.settings.streamerbot_queued_action = 'Existing avatar'
+        self.settings.streamerbot_actions_enabled = True
+        self.settings.save()
+        with urlopen(f'http://127.0.0.1:{self.port}/api/automations') as response:
+            draft = json.loads(response.read())['result']
+        self.assertFalse(self.settings.automations_migrated)
+        self.assertEqual(draft['rules'][0]['steps'][0]['action'], 'Existing avatar')
+        request = Request(f'http://127.0.0.1:{self.port}/api/automations/save',
+                          data=json.dumps({'rules': draft['rules']}).encode(), method='POST')
+        with urlopen(request) as response:
+            self.assertTrue(json.loads(response.read())['ok'])
+        saved = Settings(self.settings.path)
+        self.assertTrue(saved.automations_migrated)
+        self.assertEqual(saved.automations[0]['steps'][0]['action'], 'Existing avatar')
+        self.assertTrue(list((self.settings.path.parent / 'backups').glob('*.json')))
+        self.protocol.execute.assert_not_called()
+
+    def test_invalid_automation_does_not_overwrite_saved_settings(self):
+        self.settings.save()
+        before = self.settings.path.read_bytes()
+        request = Request(f'http://127.0.0.1:{self.port}/api/automations/save', data=b'{"rules":[{"name":"Incomplete"}]}', method='POST')
+        with self.assertRaises(HTTPError) as error:
+            urlopen(request)
+        self.assertEqual(error.exception.code, 400)
+        self.assertEqual(self.settings.path.read_bytes(), before)
+
+    def test_integration_status_is_real_listener_state(self):
+        with urlopen(f'http://127.0.0.1:{self.port}/api/integrations/status') as response:
+            result = json.loads(response.read())['result']
+        self.assertEqual(result['state'], 'disabled')
+        self.assertEqual(result['received'], 0)
+        self.protocol.execute.assert_not_called()
+
+    def test_listener_test_rejects_when_listener_is_not_running(self):
+        request = Request(f'http://127.0.0.1:{self.port}/api/integrations/udp-test', data=b'{}', method='POST')
+        with self.assertRaises(HTTPError) as error:
+            urlopen(request)
+        self.assertEqual(error.exception.code, 400)
+        self.protocol.execute.assert_not_called()
+
+    def test_playback_snapshot_includes_listener_diagnostics(self):
+        with urlopen(f'http://127.0.0.1:{self.port}/api/state') as response:
+            result = json.loads(response.read())['result']
+        self.assertEqual(result['integration']['state'], 'disabled')
+        self.assertEqual(result['speechId'], '123')
+
     def test_speak_passes_voice_and_message(self):
         body = json.dumps({"voice": "EventVoice", "message": "hello"}).encode()
         request = Request(

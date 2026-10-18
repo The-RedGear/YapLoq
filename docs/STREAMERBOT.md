@@ -1,5 +1,48 @@
 # Streamer.bot recipes
 
+## Actions workspace
+
+**Actions** is the default Streamer.Bot tab. Select an automation on the left;
+its event triggers and ordered sub-actions are on the right. Add as many Run action
+and Delay steps as needed, reorder them with the up/down controls or context menus,
+and choose Stop or Continue if a step fails. Conditions narrow a trigger by alias,
+source, viewer or other available message fields.
+
+In a Run action step, **Load actions** reads the connected instance's HTTP
+GetActions endpoint. Search by name, select an action, or enter an exact name/ID.
+Arguments are an optional JSON object; string values can include placeholders such
+as {ttsText}, {ttsAlias}, {ttsUser}, {ttsId} and {ttsSource}.
+
+**Save actions** validates the complete list and creates a settings backup before
+applying it. Existing fixed playback hooks appear as migrated queue-session actions;
+their original behavior remains active until the first save. After migration,
+those hooks are edited here rather than in the old fixed slots.
+
+Queue-session triggers deliberately differ from per-message events: “Queue: all
+speech finished” waits until every tracked item is done; “Message finished” fires
+for each recording. Existing before-playback timing remains in Connection.
+
+Runs currently queue in saved order. Delay steps are interruptible on shutdown.
+HTTP DoAction confirms dispatch, not completion of remote sub-actions. For strict
+remote execution ordering, configure the target actions in a blocking queue in
+Streamer.Bot. Failed steps appear in YapLoq's event inspector and logs.
+
+Official API: [GetActions](https://docs.streamer.bot/api/http/requests/get-actions)
+and [DoAction](https://docs.streamer.bot/api/http/requests/do-action).
+
+## Connection diagnostics
+
+In **Streamer.Bot → Connection**, the listener status shows the active UDP port
+or a startup error such as a port already in use. Counts show UDP requests received,
+accepted and rejected since launch, with the latest rejection reason. Acceptance
+does not mean playback has finished: check Queue for generation/playback results.
+
+**Test listener** sends a local probe without speaking or changing request counts.
+For a full test from Streamer.Bot, run the imported Speak action with a Test trigger
+and watch these counts and Queue. Save and restart after changing listener settings.
+
+## Speech actions
+
 The YapLoq Streamer.bot page copies UDP payloads for speech and queue controls.
 Use UDP Broadcast with port 6670, unless you changed it in YapLoq.
 

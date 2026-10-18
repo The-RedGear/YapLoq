@@ -8,14 +8,16 @@ and broader hardware and integration validation.
 1. [ ] Reliable high-volume Streamer.Bot input: configurable queue capacity,
    visible rejection reasons, and end-to-end burst tests comparing sent,
    accepted and completed requests. Do not silently discard overflow.
-2. [ ] Connection diagnostics: listener health, port conflicts, received-request
-   counts and a clear setup test. Preview must support real integrations.
+2. [x] UDP connection diagnostics: listener health, port conflicts, received/
+   accepted/rejected counts, last rejection and a speech-free local listener test.
+   External Streamer.Bot and HTTP/WebSocket accounting remain follow-up validation.
 3. [ ] Alias-safe automation: flag missing/renamed aliases and provide a repair
    path for existing Streamer.Bot actions and routing rules.
 4. [ ] Queue stability: finish live checks for fixed row order, manual moves,
    replay, selection and scroll retention under sustained traffic.
-5. [ ] Release blockers: fix the UI callback crash-logging regression test, then
-   verify packaged restart, audio-device recovery and OBS restoration live.
+5. [ ] Verify packaged restart, audio-device recovery and OBS restoration live.
+   Callback crash logging now passes the repaired literal-path test and the full
+   desktop navigation stress suite; standard controls no longer inherit preview restrictions.
 
 Defer additional providers and cosmetic expansion until these are verified.
 

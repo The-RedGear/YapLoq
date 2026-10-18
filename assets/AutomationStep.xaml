@@ -1,0 +1,23 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Sub-action" Width="570" Height="510" MinWidth="460" MinHeight="440" WindowStartupLocation="CenterOwner" WindowStyle="None" AllowsTransparency="True" Background="Transparent" Foreground="#EEEAF4" ShowInTaskbar="False">
+ <Border Background="#15131D" BorderBrush="#50485C" BorderThickness="1" CornerRadius="12"><Grid><Grid.RowDefinitions><RowDefinition Height="46"/><RowDefinition/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+  <Grid Background="#1B1824"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Name="StepTitleDrag" Text="Sub-action" FontWeight="SemiBold" Padding="16,13"/><Button Name="StepClose" Grid.Column="1" Content="×" Background="Transparent" BorderThickness="0" Width="40" Margin="0,4,6,4"/></Grid>
+  <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"><StackPanel Margin="20,16">
+   <TextBlock Text="Sub-action type" Margin="0,0,0,6"/>
+   <ComboBox Name="StepType"><ComboBoxItem Content="Run Streamer.Bot action" Tag="action"/><ComboBoxItem Content="Delay" Tag="delay"/></ComboBox>
+   <StackPanel Name="StepActionFields" Margin="0,12,0,0">
+    <TextBlock Text="Streamer.Bot action" VerticalAlignment="Center"/>
+    <Grid Margin="0,8,0,0"><ComboBox Name="StepActionPicker" DisplayMemberPath="name" TextSearch.TextPath="name" IsEditable="True" IsTextSearchEnabled="False" StaysOpenOnEdit="True" ToolTip="Type to filter actions by name or ID, or choose one from the dropdown."/>
+     <TextBlock Text="Type an action name or choose one…" Foreground="#B9B2C2" Margin="12,0,38,0" VerticalAlignment="Center" IsHitTestVisible="False"><TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding Text, ElementName=StepActionPicker}" Value=""><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
+    </Grid>
+    <TextBlock Name="StepSearchStatus" Text="Actions load automatically. Type to narrow the list." Foreground="#B9B2C2" TextWrapping="Wrap" Margin="0,6,0,0"/>
+    <TextBlock Text="Arguments (optional JSON)" Margin="0,12,0,6"/>
+    <TextBox Name="StepArguments" AcceptsReturn="True" Height="72" VerticalScrollBarVisibility="Auto" Text="{}{}"/>
+    <TextBlock Text="Leave {} for no arguments. Example: {&quot;message&quot;: &quot;{ttsText}&quot;}" Foreground="#B9B2C2" TextWrapping="Wrap" Margin="0,6,0,0"/>
+    <TextBlock Text="Available values: {ttsText}, {ttsAlias}, {ttsUser}, {ttsId}, {ttsSource}, {ttsVoice}, {ttsEngine}, {ttsError}, {ttsState}, {ttsDuration}." Foreground="#B9B2C2" TextWrapping="Wrap" Margin="0,6,0,0"/>
+   </StackPanel>
+   <StackPanel Name="StepDelayFields" Visibility="Collapsed" Margin="0,12,0,0"><TextBlock Text="Delay in seconds"/><TextBox Name="StepDelay" Text="1" Margin="0,6,0,0"/></StackPanel>
+   <TextBlock Name="StepStatus" Foreground="#B9B2C2" TextWrapping="Wrap" Margin="0,10,0,0"/>
+  </StackPanel></ScrollViewer>
+  <DockPanel Grid.Row="2" LastChildFill="False" Margin="20,12,20,18"><Button Name="StepSave" Content="Save sub-action" DockPanel.Dock="Right"/><TextBlock Text="Requests dispatch sequentially. Remote completion depends on Streamer.Bot's queues." Foreground="#B9B2C2" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,12,0"/></DockPanel>
+ </Grid></Border>
+</Window>

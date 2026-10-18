@@ -102,6 +102,8 @@ class Settings:
         self.streamerbot_cancelled_action = ""
         self.streamerbot_playback_delay = 0.0
         self.streamerbot_finished_delay = 0.0
+        self.automations = []
+        self.automations_migrated = False
         self.output_device = ""
         self.preview_output_device = ""
         self.voice_save_folder = ""
@@ -224,6 +226,8 @@ class Settings:
             self.udp_port = udp_port if 1 <= udp_port <= 65535 else self.udp_port
             self.enable_udp = bool(data.get("enable_udp", self.enable_udp))
             self.streamerbot_actions_enabled = bool(data.get("streamerbot_actions_enabled", self.streamerbot_actions_enabled))
+            self.automations = data.get('automations', []) if isinstance(data.get('automations', []), list) else []
+            self.automations_migrated = bool(data.get('automations_migrated', False))
             self.streamerbot_http_url = str(data.get("streamerbot_http_url", self.streamerbot_http_url)).rstrip("/")
             self.streamerbot_queued_action = str(data.get("streamerbot_queued_action", self.streamerbot_queued_action))
             self.streamerbot_queue_added_action = str(data.get("streamerbot_queue_added_action", self.streamerbot_queue_added_action))
@@ -386,6 +390,8 @@ class Settings:
                 "udp_port": self.udp_port,
                 "enable_udp": self.enable_udp,
                 "streamerbot_actions_enabled": self.streamerbot_actions_enabled,
+                "automations": self.automations,
+                "automations_migrated": self.automations_migrated,
                 "streamerbot_http_url": self.streamerbot_http_url.rstrip("/"),
                 "streamerbot_queued_action": self.streamerbot_queued_action,
                 "streamerbot_queue_added_action": self.streamerbot_queue_added_action,
