@@ -35,7 +35,7 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=['assets/YapLoq.ico'],
-    version='version_info.txt',
+    version='tools/version_info.txt',
 )
 coll = COLLECT(
     exe,

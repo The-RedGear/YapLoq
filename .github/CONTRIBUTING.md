@@ -28,4 +28,18 @@ By submitting a contribution, you confirm that:
    disables the project's safety/attribution notices.
 
 Please follow the [Code of Conduct](CODE_OF_CONDUCT.md). For legal and trademark
-boundaries, see [docs/LEGAL.md](docs/LEGAL.md).
+boundaries, see [legal notes](../docs/LEGAL.md).
+
+## Build and test
+
+On Windows 10/11 with Python 3.10+ and Windows PowerShell 5.1:
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[google]" pytest pyinstaller cffi
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe -m PyInstaller --noconfirm YapLoq.spec
+```
+
+The portable app is created in `dist/YapLoq`. Build metadata and packaging
+helpers live in `tools/`; application UI resources live in `assets/`.

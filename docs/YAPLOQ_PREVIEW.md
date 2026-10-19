@@ -8,7 +8,7 @@ Windows build is restricted to main; this branch uses the isolated preview build
 ## Run from source
 
 Use Windows, PowerShell 5.1 and Python 3.12. Create a repository-local `.venv`,
-install `requirements-preview.txt`, then install the project with
+install `tools/requirements-preview.txt`, then install the project with
 `python -m pip install --no-deps --no-build-isolation -e .`.
 Run `.venv\Scripts\python.exe yaploq_preview.py` from the repository root.
 Use the dedicated preview entry point; `wpf_launcher.py` retains the production path.

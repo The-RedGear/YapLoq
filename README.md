@@ -1,112 +1,57 @@
 # YapLoq
 
-<img src="assets/YapLoq-icon.png" width="128" alt="YapLoq microphone logo">
+<img src="assets/YapLoq-icon.png" width="96" alt="YapLoq logo">
 
-**Voice automation for streamers.**
+Give your stream a voice.
 
-YapLoq is a Windows desktop TTS bridge built for Streamer.bot workflows. It
-combines multiple voice providers, friendly voice aliases, pronunciation and
-moderation rules, queue management, audio routing, playback history, and
-Streamer.bot lifecycle actions in one application.
+YapLoq brings text-to-speech, custom voices and Streamer.bot controls together
+in a Windows app. Let viewers speak with their own voices, turn a message into
+a conversation between characters, or keep things simple with one voice for chat.
 
-## Highlights
+**[Download for Windows](https://github.com/The-RedGear/YapLoq/releases/latest)** ·
+[Getting started](docs/USER_GUIDE.md) · [Streamer.bot setup](docs/STREAMERBOT.md)
 
-- VoiceStudio, Windows SAPI voices, Amazon Polly, ElevenLabs, Azure, Google Cloud TTS, IBM Watson, UberDuck, TTS.Monster, Acapela, and CereProc
-- Per-alias voice, model, speed, volume, language, style, and group settings
-- Dedicated playback queue with pause, resume, skip, reorder, and clear controls
-- Pronunciation dictionary with randomized alternatives and optional censorship
-- Message moderation for links, commands, mentions, emoji, ASCII art, and more
-- Streamer.bot actions for generated, queue-added, playback-started, and finished states
-- Configurable delays before playback and after queue completion
-- Separate stream and preview audio devices
-- Local HTTP, WebSocket, and UDP integrations
-- Priorities, expiry, duplicate detection and optional paused queue recovery
-- Ordered routing, favorites, profiles, backup/restore and preset sharing
-- Optional OBS audio ducking, normalization, fades and output tests
-- Live event inspector and private diagnostic exports
+## Made for your stream
 
-**YapLoq 0.6.0 is available for Windows.** See
-[release notes](docs/RELEASE_NOTES.md), [the user guide](docs/USER_GUIDE.md),
-[Streamer.bot recipes](docs/STREAMERBOT.md), [provider adapters](docs/PROVIDERS.md),
-[legal notes](docs/LEGAL.md), and the [remaining release roadmap](ROADMAP.md).
+- Connect Windows voices or a supported speech service, including VoiceStudio,
+  Amazon Polly, ElevenLabs, Azure and Google Cloud TTS.
+- Create voices with their own names, colors and icons, and assign them to
+  viewers or roles.
+- Use `[Voice name]` tags to switch voices within a message.
+- Manage speech and replay recordings from one queue.
+- Bring chat commands, channel-point rewards and playback events into your
+  Streamer.bot setup.
+- Choose what gets spoken with pronunciation rules, text filters and cooldowns.
 
-Cloud TTS usage is billed by each provider. Only use voices you are authorized to use.
+## Get started
 
-## Download
+1. Download **YapLoq-Windows-x64-update.zip** from the latest release.
+2. Extract the whole folder and run **YapLoq.exe**. Keep `_internal` beside it.
+3. Connect a service under **Services**, then add a voice under **Voices**.
+4. For Streamer.bot, copy the import code from **Streamer.Bot → Import pack**.
 
-[Download YapLoq for Windows](https://github.com/The-RedGear/YapLoq/releases/latest)
+No Python installation is needed. Future updates are available from the download
+icon beside the version number.
 
-Download `YapLoq-Windows-x64-update.zip`, extract the complete folder,
-and run `YapLoq.exe`; Python is not required. Keep `_internal` beside it.
-This portable ZIP supports both first-time installation and in-app updates.
-The Windows application is unsigned; Windows may display a SmartScreen prompt.
-Use the download icon beside the app version to check future releases and read patch notes.
+YapLoq runs on 64-bit Windows 10 and 11. The app is unsigned, so Windows may show
+a SmartScreen warning. Cloud speech services may charge for usage.
 
-## Provider setup
+## Help and feedback
 
-Open **Services** inside YapLoq and configure at least one provider:
+Found a bug or have an idea? [Open an issue](https://github.com/The-RedGear/YapLoq/issues).
+Please leave credentials and private chat information out of reports.
 
-- **VoiceStudio:** normally available locally at `http://127.0.0.1:3900`.
-- **Amazon Polly / ElevenLabs / Azure / Google / Watson / UberDuck / TTS.Monster / Acapela / CereProc:**
-  each has its own page under **Services**. Secrets are encrypted with Windows DPAPI for this Windows account.
+[User guide](docs/USER_GUIDE.md) · [Supported services](docs/PROVIDERS.md) ·
+[What's new](docs/RELEASE_NOTES.md) · [Roadmap](docs/ROADMAP.md)
 
-For speech without an account, choose **Windows voices** on the Settings setup card.
-Temporary AWS credentials can also include a session token.
-The Windows download includes Google service-account support. Source installs need
-the optional `google-auth` package (`pip install ".[google]"`); an API key works without it.
+## For developers
 
-Never commit a populated `data` directory, API keys, or service-account JSON to Git.
-You must comply with each provider's Terms of Service and only use voices you are authorized to use.
-
-## Streamer.bot
-
-For Speaker.bot-compatible WebSocket events, configure Streamer.bot with:
-
-- Address: `127.0.0.1`
-- Port: `7581`
-- Auto Connect: enabled
-- Auto Reconnect: enabled
-
-The **Streamer.bot** page in YapLoq also provides copyable UDP commands and
-optional lifecycle actions.
-
-## Build from source
-
-Requirements: Windows 10/11, Python 3.10 or newer, and PowerShell 5.1 or newer.
-
-```powershell
-py -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -e . pytest pyinstaller cffi
-.\.venv\Scripts\python.exe -m pytest
-.\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean YapLoq.spec
-```
-
-The packaged application will be created under `dist\YapLoq`.
-
-## Contributing
-
-Bug reports, feature requests, and pull requests are welcome. Read
-[`CONTRIBUTING.md`](CONTRIBUTING.md) before submitting a change.
-
-## Privacy and responsible use
-
-YapLoq runs locally. User settings, logs, generated audio, and history are
-runtime data and are intentionally excluded from this repository. Only use
-voices and credentials you own or are authorized to use.
-
-YapLoq is **not affiliated with** Streamer.bot, Speaker.bot, Amazon, Microsoft,
-Google, ElevenLabs, IBM, or other named providers. Compatibility labels are for
-configuration only. See [`docs/LEGAL.md`](docs/LEGAL.md).
+Source setup, tests and build instructions are in
+[Contributing](.github/CONTRIBUTING.md).
 
 ## License
 
-YapLoq is available under the [MIT License](LICENSE). Third-party fonts,
-libraries, and service trademarks are described in
-[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) and [`docs/LEGAL.md`](docs/LEGAL.md).
-
-## Community
-
-- [`CONTRIBUTING.md`](CONTRIBUTING.md) — issues and pull requests
-- [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) — community standards
-- [`SECURITY.md`](SECURITY.md) — private vulnerability reports
+[MIT](LICENSE). See [third-party notices](docs/THIRD_PARTY_NOTICES.md) and
+[legal notes](docs/LEGAL.md). Use only voices you have permission to use.
+YapLoq is an independent project and is not affiliated with Streamer.bot or the
+speech providers it supports.

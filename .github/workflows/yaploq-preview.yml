@@ -16,7 +16,7 @@ jobs:
           python-version: '3.12'
       - name: Install
         run: |
-          python -m pip install -r requirements-preview.txt
+          python -m pip install -r tools/requirements-preview.txt
           python -m pip install --no-deps --no-build-isolation -e .
       - name: Test backend and preview boundaries
         run: python -m pytest -q

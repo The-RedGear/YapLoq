@@ -41,7 +41,8 @@ jobs:
       - name: Include user documentation
         shell: powershell
         run: |
-          Copy-Item -LiteralPath 'QUICK START.txt','LICENSE','THIRD_PARTY_NOTICES.md','README.md','ROADMAP.md','CHANGELOG.md','CODE_OF_CONDUCT.md','SECURITY.md','CONTRIBUTING.md' -Destination dist/YapLoq
+          Copy-Item -LiteralPath 'LICENSE','README.md' -Destination dist/YapLoq
+          Copy-Item -LiteralPath 'docs/QUICK START.txt' -Destination dist/YapLoq
           Copy-Item -LiteralPath docs -Destination dist/YapLoq/docs -Recurse -Force
           # Also surface these at package root for unzip-and-read
           Copy-Item -LiteralPath 'docs/LEGAL.md','docs/RELEASE_NOTES.md' -Destination dist/YapLoq -Force

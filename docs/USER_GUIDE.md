@@ -134,4 +134,4 @@ YapLoq supplies Speaker.bot-compatible commands and event subscriptions over
 WebSocket, plus local HTTP and UDP commands. It has its own identity and does not
 reproduce every Speaker.bot provider or feature.
 
-See also [RELEASE_NOTES.md](RELEASE_NOTES.md), [LEGAL.md](LEGAL.md), and [ROADMAP.md](../ROADMAP.md).
+See also [RELEASE_NOTES.md](RELEASE_NOTES.md), [LEGAL.md](LEGAL.md), and [ROADMAP.md](ROADMAP.md).

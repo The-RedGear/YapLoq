@@ -127,7 +127,8 @@ foreach($size in @(@(980,640),@(1180,760),@(1462,800))){
     $hit=$window.InputHitTest($point)
     while($hit -and $hit -ne $button){$hit=[Windows.Media.VisualTreeHelper]::GetParent($hit)}
     if($hit -ne $button){throw "Add action is blocked at width $width"}
-    if($script:sectionNav.Children[0].Content.Children[1].Text -ne 'Actions' -or $script:sectionNav.Children[1].Content.Children[1].Text -ne 'Connection'){throw 'Streamer.Bot tabs missing'}
+    $tabLabels=@($script:sectionNav.Children | ForEach-Object {$_.Content.Children[1].Text})
+    if(($tabLabels -join '|') -ne 'Actions|Import pack|Connection'){throw 'Streamer.Bot tabs missing'}
     if($OutputDirectory){[void][IO.Directory]::CreateDirectory($OutputDirectory);$bitmap=[Windows.Media.Imaging.RenderTargetBitmap]::new([int]$window.ActualWidth,[int]$window.ActualHeight,96,96,[Windows.Media.PixelFormats]::Pbgra32);$bitmap.Render($window);$encoder=[Windows.Media.Imaging.PngBitmapEncoder]::new();$encoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($bitmap));$stream=[IO.File]::Create((Join-Path $OutputDirectory ('automations-'+$width+'.png')));try{$encoder.Save($stream)}finally{$stream.Dispose()}}
 }
 $window.Close()

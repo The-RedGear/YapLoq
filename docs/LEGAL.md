@@ -15,7 +15,7 @@ also [common open-source license primers](https://dev.to/buildwebcrumbs/explain-
 - Authors are not liable for damages arising from use of the software.
 
 Contributions submitted to this repository are accepted under the same MIT
-License (see [`CONTRIBUTING.md`](../CONTRIBUTING.md)).
+License (see [`CONTRIBUTING.md`](../.github/CONTRIBUTING.md)).
 
 ### Why MIT for this project
 
@@ -69,14 +69,14 @@ You are responsible for:
 If you redistribute YapLoq binaries or source:
 
 - Include [`LICENSE`](../LICENSE).
-- Include [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md) (and the Inter
+- Include [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) (and the Inter
   OFL file when fonts are bundled).
 - Do not strip copyright or attribution notices.
 - Do not imply endorsement by The-RedGear or by any third-party trademark owner.
 
 ## Security reports
 
-See [`SECURITY.md`](../SECURITY.md). Do not file public issues that include live
+See [`SECURITY.md`](../.github/SECURITY.md). Do not file public issues that include live
 credentials or private user data.
 
 ## Collaboration on GitHub
@@ -84,5 +84,5 @@ credentials or private user data.
 Public contribution uses normal Git collaboration: forks, branches, and pull
 requests reviewed before merge (see
 [Git collaboration overview](https://www.geeksforgeeks.org/git/what-is-collaboration-in-git/)
-and [`CONTRIBUTING.md`](../CONTRIBUTING.md)). Maintainers may decline changes
+and [`CONTRIBUTING.md`](../.github/CONTRIBUTING.md)). Maintainers may decline changes
 that weaken security, licensing, or user-data protections.

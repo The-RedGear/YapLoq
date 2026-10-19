@@ -11,5 +11,5 @@ a = Analysis(
 pyz = PYZ(a.pure)
 exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='YapLoq-preview',
           debug=False, strip=False, upx=False, console=False,
-          icon=['assets/YapLoq.ico'], version='version_info_preview.txt')
+          icon=['assets/YapLoq.ico'], version='tools/version_info_preview.txt')
 coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='YapLoq-preview')

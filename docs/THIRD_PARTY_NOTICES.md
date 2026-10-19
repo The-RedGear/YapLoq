@@ -1,7 +1,7 @@
 # Third-party notices
 
 This file lists third-party material distributed with YapLoq or used to build
-it. YapLoq itself is licensed under the MIT License (see [`LICENSE`](LICENSE)).
+it. YapLoq itself is licensed under the MIT License (see [`LICENSE`](../LICENSE)).
 
 ## Bundled assets
 
@@ -12,14 +12,14 @@ Jonny Pinhorn, and Ninad Kale), bundled locally for offline use under the SIL Op
 Font License, Version 1.1.
 
 - Source: https://github.com/google/fonts/tree/main/ofl/poppins
-- Full copyright and license: [`assets/fonts/Poppins/OFL.txt`](assets/fonts/Poppins/OFL.txt)
+- Full copyright and license: [`assets/fonts/Poppins/OFL.txt`](../assets/fonts/Poppins/OFL.txt)
 
 ### Inter typeface
 
 YapLoq includes the **Inter** typeface by Rasmus Andersson.
 
 - License: SIL Open Font License, Version 1.1
-- Full text: [`assets/INTER-LICENSE.txt`](assets/INTER-LICENSE.txt)
+- Full text: [`assets/INTER-LICENSE.txt`](../assets/INTER-LICENSE.txt)
 
 
 ### Material Symbols (Pictogrammers / Google)
@@ -80,4 +80,4 @@ OpenSpeaker source code.
 ## Trademarks
 
 Product and company names above are trademarks of their respective owners.
-Use of those names is for identification only. See [`docs/LEGAL.md`](docs/LEGAL.md).
+Use of those names is for identification only. See [legal notes](LEGAL.md).

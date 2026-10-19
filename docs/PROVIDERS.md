@@ -38,4 +38,4 @@ Built-in references:
 - [OpenSpeaker](https://github.com/EvaisaDev/OpenSpeaker) (MIT) — interoperability reference for several cloud APIs
 
 Legal and trademark notes: [LEGAL.md](LEGAL.md). Third-party licenses:
-[THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
