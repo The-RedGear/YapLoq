@@ -62,7 +62,7 @@ if TYPE_CHECKING:
 class SpeakerBotProtocol:
     EVENTS = {
         "application": ["startedspeaking", "stoppedspeaking"],
-        "texttospeech": ["received", "generating", "textqueued", "queueadded", "engineprocessed", "playing", "finished", "cancelled", "deleted", "error", "voicechanged"],
+        "texttospeech": ["received", "generating", "textqueued", "queueadded", "queueextended", "engineprocessed", "playing", "finished", "cancelled", "deleted", "error", "voicechanged"],
         "voicegate": ["profileactivated"],
         "viewer": ["commandreceived", "voiceassigned", "voicereset", "voiceslisted", "commandfailed"],
     }

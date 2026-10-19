@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.3
+
+- Save feedback briefly flashes and fades; full messages can be opened and copied, including after the notice disappears.
+- Existing migrated actions can change triggers without being recreated.
+- Queue triggers share one menu, with a separate once-per-input event for additions to an already active queue.
+
 ## 0.6.2
 
 - Streamer.Bot action pickers load cached lists correctly, follow renamed actions by ID and flag deleted targets.

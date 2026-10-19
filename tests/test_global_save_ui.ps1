@@ -46,7 +46,7 @@ Update-GlobalSaveGroup 'Settings';Update-GlobalSaveGroup 'ElevenLabs'
 Save-AllPendingChanges
 if([IO.File]::ReadAllText($configPath) -ne $before){throw 'Validation failure partially wrote settings'}
 if($BottomStatus.Text -notlike 'Not saved - Settings:*' -or -not $script:globalSaveButton.IsEnabled){throw 'Failed section did not stay visibly pending'}
-if($script:globalSaveFeedback.Text -notlike 'Not saved - Settings:*' -or $script:globalSaveFeedback.Visibility -ne 'Visible'){throw 'Failed Save did not show its reason by the button'}
+if($script:globalSaveFeedback.Text -ne 'Not saved — click for details' -or $script:lastSaveMessage -notlike 'Not saved - Settings:*' -or $script:globalSaveFeedback.Visibility -ne 'Visible'){throw 'Failed Save did not retain full details'}
 $MaxQueueSettingBox.Text='44';$ElevenLabsEnabledCheck.IsChecked=[bool]$saved.elevenlabs_enabled
 Update-GlobalSaveGroup 'Settings';Update-GlobalSaveGroup 'ElevenLabs'
 if(-not $script:globalSaveButton.IsEnabled -or $script:globalSaveButton.Effect){throw 'Reverting pending changes should clear the glow and stay clickable'}
@@ -67,7 +67,14 @@ $script:automationRules[0].name='';$MaxQueueSettingBox.Text='45'
 Update-GlobalSaveGroup 'Actions';Update-GlobalSaveGroup 'Settings';Save-AllPendingChanges
 if([IO.File]::ReadAllText($configPath) -ne $before -or $BottomStatus.Text -notlike 'Not saved - Actions:*'){throw 'Action validation failure partially committed other settings'}
 $script:globalSaveFeedbackTimer.Interval=[TimeSpan]::FromMilliseconds(20)
+Show-SaveFeedback ('Long error: '+('detail '*150)) $true
+$details=New-SaveDetailsDialog
+if($details.Resources['SaveDetailsText'].Text -ne $script:lastSaveMessage -or -not $details.Resources['AppDialogChrome']){throw 'Full error details are missing or unstyled'}
+$details.Show();$details.Resources['CopyDetailsButton'].RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
+if([Windows.Clipboard]::GetText() -ne $script:lastSaveMessage){throw 'Copy details truncated the error'}
+$details.Close()
 Show-SaveFeedback 'Feedback timeout test'
+if(-not $script:globalSaveFeedback.HasAnimatedProperties){throw 'Save feedback has no flash animation'}
 $deadline=[DateTime]::UtcNow.AddSeconds(3)
 while($script:globalSaveFeedback.Visibility -eq 'Visible' -and [DateTime]::UtcNow -lt $deadline){$window.Dispatcher.Invoke([Action]{},[Windows.Threading.DispatcherPriority]::Background);Start-Sleep -Milliseconds 10}
 if($script:globalSaveFeedback.Visibility -ne 'Collapsed'){throw 'Save feedback did not disappear'}

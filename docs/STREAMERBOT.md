@@ -48,6 +48,11 @@ want to run. Search your connected Streamer.Bot actions by name. Steps run in
 saved order. For strict completion ordering inside Streamer.Bot, use a blocking
 queue there.
 
+Under **Queue**, use **Queue started (first audio ready)** for a new queue,
+or **Message added to active queue** for new inputs joining an existing queue.
+**Message added to queue** runs for every input, including the first.
+Splitting one input into voices or sentences does not repeat these admission events.
+
 ## Troubleshooting
 
 - Check **Connection** for listener errors and rejected requests.

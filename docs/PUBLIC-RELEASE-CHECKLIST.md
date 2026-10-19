@@ -14,7 +14,7 @@ and before publishing a Windows Release build.
 
 ## Version identity
 
-- [x] `pyproject.toml` / `__version__` / `tools/version_info.txt` report **0.6.2**
+- [x] `pyproject.toml` / `__version__` / `tools/version_info.txt` report **0.6.3**
 - [x] [`docs/RELEASE_NOTES.md`](RELEASE_NOTES.md) drafted for the GitHub Release body
 - [x] USER_GUIDE / CHANGELOG / README aligned to 0.5 preview
 

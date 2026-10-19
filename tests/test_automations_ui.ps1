@@ -30,6 +30,15 @@ if($LiveLoad){
 $script:automationLoaded=$true
 (Get-AutomationControl 'AutomationSave').IsEnabled=$true
 $script:automationEventCatalog=@([pscustomobject]@{source='texttospeech';event='playing';label='Playback started'},[pscustomobject]@{source='viewer';event='voiceassigned';label='Viewer voice set successfully'})
+$savedCatalog=$script:automationEventCatalog
+$script:automationEventCatalog=@(
+    [pscustomobject]@{source='texttospeech';event='queueadded';label='Message added to queue'},
+    [pscustomobject]@{source='texttospeech';event='queueextended';label='Message added to active queue'},
+    [pscustomobject]@{source='legacy';event='queued';label='Queue started (first audio ready)'},
+    [pscustomobject]@{source='legacy';event='queueAdded';label='Old duplicate'})
+$queueMenu=[Windows.Controls.ContextMenu]::new();Add-TriggerMenuCategories $queueMenu
+if(($queueMenu.Items.Header -join ',') -ne 'Queue' -or $queueMenu.Items[0].Items.Count -ne 3){throw 'Queue triggers are split across menus or contain duplicate legacy entries'}
+$script:automationEventCatalog=$savedCatalog
 $click=[Windows.Controls.Button]::ClickEvent
 # Start from the actual empty-library state, not a preselected draft.
 Refresh-AutomationList $null

@@ -115,6 +115,30 @@ def test_duplicate_session_rules_keep_saved_order(runner):
     assert [r['id'] for r in runner._configured_action('streamerbot_playing_action')['rules']] == ['one', 'two']
 
 
+def test_edit_existing_migrated_action_to_another_event_and_dispatch(runner):
+    existing = rule(triggers=[dict(source='legacy', event='queued')])
+    original_id = existing['id']
+    existing['name'] = 'Queue addition'
+    existing['triggers'] = [dict(source='texttospeech', event='queueextended')]
+    existing['steps'][0]['action'] = 'Updated action'
+    edited = validate_rules([existing])[0]
+    assert edited['id'] == original_id and 'legacyKey' not in edited
+    runner.settings.automations = [edited]
+    runner.settings.automations_migrated = True
+    runner.settings.save()
+    assert Settings(runner.settings.path).automations == [edited]
+    runner._on_event('texttospeech', 'queueextended', dict(id='new', alias='Plankton'))
+    assert runner.pending.get_nowait()[0]['steps'][0]['action'] == 'Updated action'
+    assert runner.pending.empty()
+
+
+def test_edit_existing_session_trigger_rebinds_legacy_metadata():
+    existing = rule(triggers=[dict(source='legacy', event='queued')])
+    existing['triggers'] = [dict(source='legacy', event='finished')]
+    edited = validate_rules([existing])[0]
+    assert edited['legacyKey'] == 'streamerbot_finished_action'
+
+
 @pytest.mark.parametrize('seconds', [-1, float('nan'), float('inf'), 'bad'])
 def test_invalid_delays_are_rejected(seconds):
     with pytest.raises(ValueError):

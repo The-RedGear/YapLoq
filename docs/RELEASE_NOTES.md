@@ -1,4 +1,6 @@
-Latest release: [YapLoq 0.6.2](releases/0.6.2.md).
+Latest release: [YapLoq 0.6.3](releases/0.6.3.md).
+
+Previous release: [YapLoq 0.6.2](releases/0.6.2.md).
 
 Previous release: [YapLoq 0.6.1](releases/0.6.1.md).
 

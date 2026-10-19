@@ -81,6 +81,7 @@ function script:Install-LiveSettings {
     })
     $menu=[Windows.Controls.ContextMenu]::new()
     $discard=[Windows.Controls.MenuItem]::new();$discard.Header='Discard unsaved changes';$discard.Add_Click({Discard-PendingSettings});[void]$menu.Items.Add($discard);$script:globalSaveButton.ContextMenu=$menu
+    $details=[Windows.Controls.MenuItem]::new();$details.Header='Last save details';$details.Add_Click({Show-SaveDetails});[void]$menu.Items.Add($details)
     $HistoryLimitBox.ToolTip='Save to apply retention changes. Lowering this value can remove older history and audio.'
     foreach($name in @('UdpBox','HttpBox','WsBox','EnableUdpCheck','PersistQueueCheck')){$control=$window.FindName($name);if($control){$control.ToolTip='Save and restart YapLoq to apply this connection/recovery setting.'}}
     $script:liveSettingsInstalled=$true
@@ -379,12 +380,35 @@ function script:Add-GlobalSaveGroup([string]$key,$inputs,[scriptblock]$save){
     Reset-GlobalSaveGroup $key
 }
 
+function script:New-SaveDetailsDialog {
+    $dialog=[Windows.Window]::new();$dialog.Title='Save details';if($window.IsVisible){$dialog.Owner=$window};$dialog.Width=560;$dialog.Height=340;$dialog.MinWidth=420;$dialog.MinHeight=260;$dialog.WindowStartupLocation='CenterOwner'
+    $dialog.Resources.MergedDictionaries.Add($window.Resources)
+    $body=[Windows.Controls.Grid]::new();$body.Margin=20;$dialog.Content=$body
+    foreach($height in @('*','Auto')){$row=[Windows.Controls.RowDefinition]::new();$row.Height=$height;[void]$body.RowDefinitions.Add($row)}
+    $scroll=[Windows.Controls.ScrollViewer]::new();$scroll.VerticalScrollBarVisibility='Auto';[void]$body.Children.Add($scroll)
+    $text=[Windows.Controls.TextBlock]::new();$text.Text=[string]$script:lastSaveMessage;$text.TextWrapping='Wrap';$scroll.Content=$text;$dialog.Resources['SaveDetailsText']=$text
+    $buttons=[Windows.Controls.StackPanel]::new();$buttons.Orientation='Horizontal';$buttons.HorizontalAlignment='Right';$buttons.Margin='0,16,0,0';[Windows.Controls.Grid]::SetRow($buttons,1);[void]$body.Children.Add($buttons)
+    $copy=[Windows.Controls.Button]::new();$copy.Content='Copy details';$copy.Margin='0,0,8,0';$copy.Add_Click({param($sender,$e)$d=[Windows.Window]::GetWindow($sender);[Windows.Clipboard]::SetText($d.Resources['SaveDetailsText'].Text);$sender.Content='Copied'});[void]$buttons.Children.Add($copy);$dialog.Resources['CopyDetailsButton']=$copy
+    $close=[Windows.Controls.Button]::new();$close.Content='Close';$close.Add_Click({param($sender,$e)[Windows.Window]::GetWindow($sender).Close()});[void]$buttons.Children.Add($close)
+    Apply-AppFont $dialog
+    return $dialog
+}
+
+function script:Show-SaveDetails {
+    if(-not $script:lastSaveMessage){return}
+    $dialog=New-SaveDetailsDialog;[void]$dialog.ShowDialog()
+}
+
 function script:Show-SaveFeedback([string]$message,[bool]$failed=$false){
     if(-not $script:globalSaveFeedback){return}
     $script:globalSaveFeedbackTimer.Stop()
-    $script:globalSaveFeedback.Text=$message;$script:globalSaveFeedback.ToolTip=$message
+    $script:lastSaveMessage=$message
+    $script:globalSaveFeedback.BeginAnimation([Windows.UIElement]::OpacityProperty,$null);$script:globalSaveFeedback.Opacity=1
+    $script:globalSaveFeedback.Text=if($failed){'Not saved — click for details'}else{$message};$script:globalSaveFeedback.ToolTip='View or copy the full save result'
     $script:globalSaveFeedback.Foreground=[Windows.Media.BrushConverter]::new().ConvertFromString($(if($failed){'#E5B96F'}else{'#86C5AE'}))
     $script:globalSaveFeedback.Visibility='Visible'
+    $flash=[Windows.Media.Animation.DoubleAnimation]::new();$flash.From=1;$flash.To=0.4;$flash.Duration=[TimeSpan]::FromMilliseconds(180);$flash.AutoReverse=$true;$flash.RepeatBehavior=[Windows.Media.Animation.RepeatBehavior]::new(2);$flash.FillBehavior='Stop'
+    $script:globalSaveFeedback.BeginAnimation([Windows.UIElement]::OpacityProperty,$flash)
     $script:globalSaveFeedbackTimer.Start()
 }
 
@@ -491,10 +515,16 @@ function script:Install-GlobalSave {
     $parent=$BridgeStatusButton.Parent;$parent.Children.Insert($parent.Children.IndexOf($BridgeStatusButton),$button)
     $script:globalSaveFeedback=[Windows.Controls.TextBlock]::new();$notice=$script:globalSaveFeedback
     $notice.VerticalAlignment='Center';$notice.MaxWidth=260;$notice.Margin='0,0,10,0';$notice.TextTrimming='CharacterEllipsis';$notice.Visibility='Collapsed'
+    $notice.Cursor=[Windows.Input.Cursors]::Hand;$notice.Focusable=$true
+    $notice.Add_MouseLeftButtonUp({Show-SaveDetails});$notice.Add_KeyDown({param($sender,$e)if($e.Key -in @('Enter','Space')){$e.Handled=$true;Show-SaveDetails}})
     [Windows.Automation.AutomationProperties]::SetName($notice,'Save result')
     $parent.Children.Insert($parent.Children.IndexOf($button),$notice)
     $script:globalSaveFeedbackTimer=[Windows.Threading.DispatcherTimer]::new();$script:globalSaveFeedbackTimer.Interval=[TimeSpan]::FromSeconds(6)
-    $script:globalSaveFeedbackTimer.Add_Tick({param($sender,$e)$sender.Stop();$script:globalSaveFeedback.Visibility='Collapsed'})
+    $script:globalSaveFeedbackTimer.Add_Tick({param($sender,$e)
+        $sender.Stop();$fade=[Windows.Media.Animation.DoubleAnimation]::new();$fade.From=1;$fade.To=0;$fade.Duration=[TimeSpan]::FromMilliseconds(250)
+        $fade.Add_Completed({if(-not $script:globalSaveFeedbackTimer.IsEnabled){$script:globalSaveFeedback.Visibility='Collapsed'}})
+        $script:globalSaveFeedback.BeginAnimation([Windows.UIElement]::OpacityProperty,$fade)
+    })
     $window.Add_Closed({if($script:globalSaveFeedbackTimer){$script:globalSaveFeedbackTimer.Stop()}})
     $button.Add_Click({Save-AllPendingChanges})
     $window.Add_PreviewKeyDown({param($sender,$e)if($e.Key -eq 'S' -and [Windows.Input.Keyboard]::Modifiers -eq [Windows.Input.ModifierKeys]::Control){Save-AllPendingChanges;$e.Handled=$true}})

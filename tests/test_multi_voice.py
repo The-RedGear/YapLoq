@@ -48,7 +48,28 @@ def test_queue_added_fires_once_per_input_in_empty_and_active_queue(engine, mess
         if count > 1:
             assert added[-1]['speechIds'] == result['speechIds']
             assert added[-1]['segmentCount'] == count
+        extended = [data for event, data in events if event == 'queueextended']
+        assert len(extended) == request_index
+        if request_index:
+            assert extended[-1]['id'] == result['speechIds'][0]
     assert len([event for event, _ in events if event == 'received']) == 2 * count
+
+
+def test_active_queue_addition_fires_while_playing_but_not_for_next_new_queue(engine):
+    events = []
+    engine.events.subscribe(lambda source, event, data: events.append(event))
+    speak(engine, 'First')
+    current = engine.pending.get_nowait()
+    current.status = 'Playing'
+    engine._current = current
+    speak(engine, '[Other] second [EventVoice] third')
+    assert events.count('queueextended') == 1
+    while not engine.pending.empty():
+        engine.pending.get_nowait()
+    engine._current = None
+    speak(engine, 'New queue')
+    assert events.count('queueextended') == 1
+    assert events.count('queueadded') == 3
 
 
 @pytest.mark.parametrize('text,expected', [

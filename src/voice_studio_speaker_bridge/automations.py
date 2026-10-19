@@ -8,10 +8,10 @@ import json
 from .protocol import SpeakerBotProtocol
 
 LEGACY = {
-    'streamerbot_queued_action': ('Queue: first audio ready', 'queued'),
+    'streamerbot_queued_action': ('Queue started (first audio ready)', 'queued'),
     'streamerbot_queue_added_action': ('Queue: speech added', 'queueAdded'),
-    'streamerbot_playing_action': ('Queue: playback starts', 'playing'),
-    'streamerbot_finished_action': ('Queue: all speech finished', 'finished'),
+    'streamerbot_playing_action': ('Queue playback started', 'playing'),
+    'streamerbot_finished_action': ('Queue finished', 'finished'),
     'streamerbot_received_action': ('Message received', 'received'),
     'streamerbot_generating_action': ('Generation started', 'generating'),
     'streamerbot_generated_action': ('Audio generated', 'generated'),
@@ -19,7 +19,7 @@ LEGACY = {
     'streamerbot_cancelled_action': ('Message cancelled', 'itemCancelled'),
 }
 EVENT_LABELS = dict(received='Message received', generating='Generation started', textqueued='Audio ready',
-                    queueadded='Message added to queue', engineprocessed='Audio generated', playing='Playback started',
+                    queueadded='Message added to queue', queueextended='Message added to active queue', engineprocessed='Audio generated', playing='Playback started',
                     finished='Message finished', cancelled='Message cancelled or skipped', deleted='Message deleted',
                     error='Message failed', startedspeaking='Speech session started', stoppedspeaking='Speech session stopped',
                     profileactivated='Profile activated', voicechanged='Queued voice changed')
@@ -82,14 +82,16 @@ def validate_rules(raw):
         if key:
             if key not in LEGACY:
                 raise ValueError('Choose a supported queue-session trigger')
-            if triggers != [dict(source='legacy', event=LEGACY[key][1])]:
-                raise ValueError('Keep the migrated queue trigger, or create a new automation for another event')
-        elif any(t['source'] == 'legacy' for t in triggers):
+        if any(t['source'] == 'legacy' for t in triggers):
             # Session triggers reuse the proven lifecycle state machine.
             keys = [k for k, v in LEGACY.items() if triggers == [dict(source='legacy', event=v[1])]]
             if not keys:
                 raise ValueError('Use a single queue-session trigger per automation, or choose per-message events')
             rule['legacyKey'] = keys[0]
+        else:
+            # Once edited to ordinary events this is a normal action, not a
+            # legacy lifecycle hook. Keep its ID, name, conditions and steps.
+            rule.pop('legacyKey', None)
         conditions = rule.setdefault('conditions', [])
         if not isinstance(conditions, list):
             raise ValueError('Conditions must be a list')

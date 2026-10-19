@@ -15,10 +15,10 @@ function Set-AutomationMessage([string]$message){(Get-AutomationControl 'Automat
 
 function Get-TriggerCategory($trigger){
     if($trigger.source -eq 'viewer'){return 'Viewers'}
-    if($trigger.source -eq 'legacy'){return 'Queue sessions'}
+    if($trigger.source -eq 'legacy'){return 'Queue'}
     if($trigger.source -eq 'integration'){return 'Integrations'}
     if($trigger.event -in @('playing','finished','cancelled')){return 'Playback'}
-    if($trigger.event -in @('queueadded','textqueued','deleted')){return 'Queue'}
+    if($trigger.event -in @('queueadded','queueextended','textqueued','deleted')){return 'Queue'}
     return 'Speech'
 }
 
@@ -30,8 +30,8 @@ function Add-AutomationTrigger($trigger){
 }
 
 function Add-TriggerMenuCategories($menu){
-    foreach($category in @('Speech','Queue','Playback','Viewers','Integrations','Queue sessions')){
-        $entries=@($script:automationEventCatalog|Where-Object{(Get-TriggerCategory $_) -eq $category})
+    foreach($category in @('Speech','Queue','Playback','Viewers','Integrations')){
+        $entries=@($script:automationEventCatalog|Where-Object{(Get-TriggerCategory $_) -eq $category -and ($_.source -ne 'legacy' -or $_.event -in @('queued','playing','finished'))})
         if(-not $entries.Count){continue}
         $group=[Windows.Controls.MenuItem]::new();$group.Header=$category
         foreach($trigger in $entries){

@@ -213,13 +213,17 @@ class SpeechEngine:
             if user.strip():
                 self._last_user_request[user.casefold().strip()] = now
             with self._lock:
+                queue_was_active = self._queue_has_work()
                 for index, job in enumerate(jobs):
                     job.segment_index = index
                     self._recent_requests[(user.casefold(), job.alias.name, job.text.casefold())] = now
                     self._publish_job(job, queue_added=False)
-                self.events.emit('texttospeech', 'queueadded', dict(
+                event_data = dict(
                     self._event_data(jobs[0]), speechIds=[job.speech_id for job in jobs],
-                    segmentCount=len(jobs), text=' '.join(job.text for job in jobs)))
+                    segmentCount=len(jobs), text=' '.join(job.text for job in jobs))
+                self.events.emit('texttospeech', 'queueadded', event_data)
+                if queue_was_active:
+                    self.events.emit('texttospeech', 'queueextended', event_data)
             return jobs
 
     def _enqueue(self, text: str, alias: VoiceAlias, source: str, user: str, priority: int, *, recording: str = "", viewer: dict | None = None, dry_run=False) -> SpeechJob:
@@ -270,8 +274,12 @@ class SpeechEngine:
             self._publish_job(job)
         return job
 
+    def _queue_has_work(self):
+        return self.pending.qsize() > 0 or (self._current is not None and self._current.status not in {'Finished', 'Error', 'Cancelled', 'Skipped'})
+
     def _publish_job(self, job, *, queue_added=True):
         with self._lock:
+            queue_was_active = self._queue_has_work()
             # Register the first job too, before a fast worker can finish it.
             self.events.emit("texttospeech", "received", self._event_data(job))
             job.registered = True
@@ -283,6 +291,8 @@ class SpeechEngine:
             # Queue admission is per input; generation/playback events remain per clip.
             if queue_added:
                 self.events.emit("texttospeech", "queueadded", self._event_data(job))
+                if queue_was_active:
+                    self.events.emit('texttospeech', 'queueextended', self._event_data(job))
             self._save_queue()
 
     def _prepare_ssml(self, text: str, user: str, alias: VoiceAlias) -> str:
