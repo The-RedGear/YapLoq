@@ -12,15 +12,28 @@ foreach($node in $markup.SelectNodes('//*[@Name]')){Set-Variable -Name $node.Get
 $script:profiles=@{};$script:profileModels=@{};$script:profileModelOptions=@{};$script:servicesExpanded=$true;$script:loadingSettings=$false;$script:isPreview=$true
 Apply-AppFont $window
 . (Join-Path $resourceRoot 'assets/RuleEditors.ps1');Install-NumericEditors;Install-ProfanityEditor;Refresh-Grid;Install-ServiceGuides
-. (Join-Path $resourceRoot 'assets/YapLoqShell.ps1');Install-YapLoqShell
+. (Join-Path $resourceRoot 'assets/YapLoqShell.ps1')
+# Production installs the shell before the first settings refresh.
+$VoiceRulesGrid.ItemsSource=$null
+Install-YapLoqShell
+Refresh-Grid
 function Start-ViewerLoad {}
 $entry=[pscustomobject]@{platform='twitch';userId='123';displayName='Example viewer';login='viewer';voice='EventVoice';available=$true;warning='';assignmentOrigin='Viewer preference'}
 Apply-ViewerList ([pscustomobject]@{viewers=@($entry);voices=@('EventVoice','playlist:Characters')})
+Apply-ViewerList ([pscustomobject]@{viewers=@($entry,[pscustomobject]@{platform='twitch';userId='789';displayName='Default viewer';voice='';available=$true});voices=@('EventVoice','playlist:Characters')})
+if((Get-ViewerControl 'ViewerList').Items.Count -ne 1){throw 'Default viewer appeared in Assignments'}
 (Get-ViewerControl 'ViewerList').SelectedIndex=0
 if((Get-ViewerControl 'ViewerPlatform') -isnot [Windows.Controls.ComboBox] -or (Get-ViewerControl 'ViewerPlatform').IsEditable){throw 'Platform must be a noneditable dropdown'}
 if((Get-ViewerControl 'ViewerPlatform').SelectedValue -ne 'twitch' -or (Get-ViewerControl 'ViewerPlatform').IsEnabled){throw 'Saved platform identity was not restored and protected'}
 foreach($platform in @('twitch','youtube','kick','discord','tiktok','facebook','trovo')){if($platform -notin @((Get-ViewerControl 'ViewerPlatform').Items|ForEach-Object{$_.Tag})){throw "Missing platform: $platform"}}
 if((Get-ViewerControl 'ViewerVoice').SelectedValue -ne 'EventVoice' -or -not (Get-ViewerControl 'ViewerId').IsReadOnly){throw 'Viewer selection did not restore or protect identity'}
+if($script:assignmentSectionButtons.Count -ne 2 -or $script:assignmentSectionButtons.ContainsKey('Default voice') -or $script:assignmentSectionButtons.ContainsKey('Viewer commands')){throw 'Assignments retained unnecessary tabs'}
+if($script:assignmentDefaultPicker.Parent -ne $script:assignmentSectionButtons.Viewers.Parent){throw 'Fallback voice is not inline with Assignments controls'}
+if('user' -in @($VoiceRuleFieldBox.Items|ForEach-Object{$_.Tag})){throw 'Name defaults are still offered'}
+if($script:speechInputExpander.IsExpanded -or $script:speechInputExpander.Style -ne $window.FindResource('SettingsExpander') -or $script:speechInputCard.CornerRadius.TopLeft -ne 12){throw 'Speech input is not a matching collapsed settings card'}
+$settingsStack=$window.FindName('SettingsStack')
+if($settingsStack.Children.IndexOf($script:speechInputCard) -ge $settingsStack.Children.IndexOf($window.FindName('WindowSettingsExpander').Parent)){throw 'Speech input is below the general/about settings'}
+if($script:assignmentTemplatesCard.Parent -ne $StreamerBotPage.Content -or $script:viewerTemplatePlatform.Parent.Parent -ne $script:assignmentTemplatesExpander.Content){throw 'Integration templates were not moved to Streamer.Bot Connection'}
 (Get-ViewerControl 'ViewerSearch').Text='not found'
 if((Get-ViewerControl 'ViewerList').Items.Count -ne 0){throw 'Viewer search failed'}
 (Get-ViewerControl 'ViewerSearch').Text='123'
@@ -33,6 +46,18 @@ $click=[Windows.Controls.Button]::ClickEvent
 if($script:viewerSaved.voice -ne 'playlist:Characters' -or $script:viewerSaved.userId -ne '123'){throw 'Assignment save failed'}
 (Get-ViewerControl 'ViewerReset').RaiseEvent([Windows.RoutedEventArgs]::new($click))
 if($script:viewerSaved.voice -ne ''){throw 'Reset did not clear the assignment'}
+function Show-AppConfirmation($owner,$message,$title){return $true}
+(Get-ViewerControl 'ViewerDelete').RaiseEvent([Windows.RoutedEventArgs]::new($click))
+if($script:viewerSaved.userId -ne '123' -or $script:viewerSaved.platform -ne 'twitch'){throw 'Delete did not target selected viewer'}
+(Get-ViewerControl 'ViewerEdit').RaiseEvent([Windows.RoutedEventArgs]::new($click))
+if((Get-ViewerControl 'ViewerId').IsReadOnly -or -not (Get-ViewerControl 'ViewerPlatform').IsEnabled){throw 'Edit viewer did not unlock identity correction'}
+(Get-ViewerControl 'ViewerId').Text='456'
+(Get-ViewerControl 'ViewerSave').RaiseEvent([Windows.RoutedEventArgs]::new($click))
+if($script:viewerSaved.userId -ne '456' -or $script:viewerSaved.originalIdentity.userId -ne '123'){throw 'Identity correction lost the original record key'}
+$savedRequest=$script:viewerSaved
+(Get-ViewerControl 'ViewerId').Text='username-not-id'
+(Get-ViewerControl 'ViewerSave').RaiseEvent([Windows.RoutedEventArgs]::new($click))
+if($script:viewerSaved -ne $savedRequest -or (Get-ViewerControl 'ViewerStatus').Text -notlike '*numeric user ID*'){throw 'Twitch username was accepted as a stable ID'}
 Set-MessageViewerDefault ([pscustomobject]@{Platform='youtube';UserId='AbC';DisplayName='Viewer';User='viewer';Alias='EventVoice'})
 if($script:viewerSaved.platform -ne 'youtube' -or $script:viewerSaved.userId -cne 'AbC'){throw 'Message context assignment lost stable identity'}
 $window.WindowStartupLocation='Manual';$window.Left=-20000;$window.Top=-20000;$window.ShowInTaskbar=$false;$window.Show()

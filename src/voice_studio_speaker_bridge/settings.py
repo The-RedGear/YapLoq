@@ -4,8 +4,9 @@ import json
 import logging
 import os
 import shutil
+import copy
 from pathlib import Path
-from threading import RLock
+from threading import RLock, local
 
 from .models import VoiceAlias
 from .profanity import default_rules, normalize_rules
@@ -38,7 +39,23 @@ def default_config_dir() -> Path:
 
 
 class Settings:
+    # Mutable records/actions keep their explicit confirmation workflows.
+    RUNTIME_EXCLUDED = frozenset({'path', 'lock', 'aliases', 'automations', 'automations_migrated',
+                                 'http_address', 'http_port', 'ws_address', 'ws_port', 'udp_port', 'enable_udp',
+                                 'persist_queue', 'history_limit', 'minimize_to_tray', 'setup_completed', 'recovery_notice'})
+
+    def __getattribute__(self, name):
+        if not name.startswith('_'):
+            state = object.__getattribute__(self, '__dict__')
+            runtime = state.get('_runtime_values', {})
+            context = state.get('_runtime_context')
+            if name in runtime and not getattr(context, 'persistent', False):
+                return runtime[name]
+        return object.__getattribute__(self, name)
+
     def __init__(self, path: Path | None = None):
+        self._runtime_values = {}
+        self._runtime_context = local()
         self.path = path or default_config_dir() / "settings.json"
         self.lock = RLock()
         self._loaded_mtime_ns = 0
@@ -133,6 +150,8 @@ class Settings:
         self.role_voice_rules: dict[str, str] = {}
         self.assignment_default_voice = ''
         self.viewer_commands_enabled = False
+        self.chat_voice_tags_all_enabled = True
+        self.split_speech_sentences = False
         self.history_limit = 200
         self.minimize_to_tray = False
         self.max_message_age = 0.0
@@ -165,14 +184,14 @@ class Settings:
         finally:
             apply_preview_limits(self)
 
-    def _load(self) -> None:
-        if not self.path.exists():
+    def _load(self, payload=None) -> None:
+        if payload is None and not self.path.exists():
             return
         previous_state = self.__dict__.copy()
         try:
             # Windows PowerShell 5 writes UTF-8 JSON with a BOM.
             try:
-                data = json.loads(self.path.read_text(encoding="utf-8-sig"))
+                data = payload if payload is not None else json.loads(self.path.read_text(encoding="utf-8-sig"))
                 if not isinstance(data, dict):
                     raise ValueError("Settings must be an object")
             except (ValueError, UnicodeError):
@@ -274,6 +293,8 @@ class Settings:
             self.role_voice_rules = {str(key).casefold(): str(value) for key, value in (data.get("role_voice_rules") or {}).items()}
             self.assignment_default_voice = str(data.get('assignment_default_voice') or '').strip()
             self.viewer_commands_enabled = data.get('viewer_commands_enabled') is True
+            self.chat_voice_tags_all_enabled = data.get('chat_voice_tags_all_enabled', True) is True
+            self.split_speech_sentences = data.get('split_speech_sentences', False) is True
             self.history_limit = max(1, min(100000, int(data.get("history_limit", self.history_limit))))
             self.minimize_to_tray = bool(data.get("minimize_to_tray", self.minimize_to_tray))
             for key, upper in (("max_message_age", 86400), ("duplicate_window", 3600),
@@ -307,11 +328,39 @@ class Settings:
                     name: VoiceAlias.from_dict(name, value)
                     for name, value in aliases.items()
                 }
-            self._loaded_mtime_ns = self.path.stat().st_mtime_ns
+            if payload is None:
+                self._loaded_mtime_ns = self.path.stat().st_mtime_ns
         except (OSError, ValueError, TypeError, AttributeError, json.JSONDecodeError):
             self.__dict__.clear()
             self.__dict__.update(previous_state)
+            if payload is not None:
+                raise ValueError('Invalid live settings; the previous active values were retained')
             logging.exception("Could not load settings from %s", self.path)
+
+    def apply_runtime(self, payload: dict | None) -> dict:
+        with self.lock:
+            self.reload_if_changed()
+            if payload is None:
+                self._runtime_values = {}
+                return dict(active=False, restartRequired=[], saveRequired=[])
+            if not isinstance(payload, dict):
+                raise ValueError('Live settings must be an object')
+            candidate = object.__new__(Settings)
+            candidate.__dict__ = {key: copy.deepcopy(value) for key, value in self.__dict__.items()
+                                  if key not in {'lock', '_runtime_context', '_runtime_values'}}
+            candidate.lock = RLock()
+            candidate._runtime_context = local()
+            candidate._runtime_values = {}
+            candidate._load(payload)
+            apply_preview_limits(candidate)
+            values = {key: value for key, value in candidate.__dict__.items()
+                      if not key.startswith('_') and key not in self.RUNTIME_EXCLUDED
+                      and key in payload and key in self.__dict__ and value != self.__dict__[key]}
+            self._runtime_values = values  # One replacement; readers never see a partial draft.
+            restart = [key for key in ('http_address', 'http_port', 'ws_address', 'ws_port', 'udp_port', 'enable_udp', 'persist_queue')
+                       if key in payload and payload[key] != self.__dict__.get(key)]
+            save_required = ['history_limit'] if 'history_limit' in payload and payload['history_limit'] != self.__dict__.get('history_limit') else []
+            return dict(active=bool(values), restartRequired=restart, saveRequired=save_required)
 
     @staticmethod
     def _coerce_string_list(raw) -> list[str]:
@@ -349,6 +398,15 @@ class Settings:
             return self._loaded_mtime_ns == modified
 
     def save(self) -> None:
+        # Backend record/profile saves must not persist a UI's temporary overlay.
+        with self.lock:
+            self._runtime_context.persistent = True
+            try:
+                self._save_persistent()
+            finally:
+                self._runtime_context.persistent = False
+
+    def _save_persistent(self) -> None:
         with self.lock:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             payload = {
@@ -432,6 +490,8 @@ class Settings:
                 "role_voice_rules": self.role_voice_rules,
                 "assignment_default_voice": self.assignment_default_voice,
                 'viewer_commands_enabled': self.viewer_commands_enabled,
+                'chat_voice_tags_all_enabled': self.chat_voice_tags_all_enabled,
+                'split_speech_sentences': self.split_speech_sentences,
                 "history_limit": self.history_limit,
                 "minimize_to_tray": self.minimize_to_tray,
                 "aliases": {name: alias.to_dict() for name, alias in self.aliases.items()},

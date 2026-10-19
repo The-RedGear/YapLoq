@@ -14,6 +14,21 @@ from voice_studio_speaker_bridge.settings import Settings
 
 
 class HttpServerTests(unittest.TestCase):
+    def test_runtime_settings_route_does_not_persist(self):
+        before = self.settings.path.read_bytes() if self.settings.path.exists() else None
+        request = Request(f'http://127.0.0.1:{self.port}/api/settings/runtime', data=json.dumps({'settings': {'split_speech_sentences': True}}).encode(), headers={'Content-Type': 'application/json'})
+        with urlopen(request) as response:
+            self.assertTrue(json.loads(response.read())['result']['active'])
+        self.assertTrue(self.settings.split_speech_sentences)
+        self.assertEqual(self.settings.path.read_bytes() if self.settings.path.exists() else None, before)
+
+    def test_delete_assignment_route(self):
+        payload = dict(platform='twitch', userId='123')
+        request = Request(f'http://127.0.0.1:{self.port}/api/viewers/delete', data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json'})
+        with urlopen(request) as response:
+            self.assertTrue(json.loads(response.read())['ok'])
+        self.protocol.execute.assert_called_once_with('DeleteViewerVoice', payload)
+
     def test_action_validation_has_no_save_or_backup_side_effects(self):
         payload = {'rules': []}
         before = self.settings.path.read_bytes() if self.settings.path.exists() else None

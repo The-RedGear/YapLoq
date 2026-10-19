@@ -4,6 +4,27 @@ import re
 TAG = re.compile(r'(?<!\\)\[([^\[\]\r\n]{1,64})\]')
 
 
+def normalized_voice_name(name):
+    return ' '.join(''.join(char if char.isalnum() else ' ' for char in name.casefold()).split())
+
+
+def sentence_clips(text):
+    """Conservative plain-text boundaries; leave abbreviations and initials intact."""
+    start = 0
+    result = []
+    for boundary in re.finditer(r'''[.!?。！？]["'”’)]*\s+|\n+''', text):
+        end = boundary.end()
+        candidate = text[start:end].strip()
+        if re.search(r'\b(?:mr|mrs|ms|dr|prof|sr|jr|st|vs|etc|e\.g|i\.e)\.$', candidate, re.I) or re.search(r'\b[A-Z]\.$', candidate):
+            continue
+        if candidate:
+            result.append(candidate)
+        start = end
+    if text[start:].strip():
+        result.append(text[start:].strip())
+    return result
+
+
 def split_voices(text, default_alias, resolve):
     matches = list(TAG.finditer(text))
     if not matches:

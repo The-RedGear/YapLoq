@@ -8,6 +8,12 @@ Save commits grid edits, stages the changed sections in memory, validates Action
 
 Page-level Save controls are hidden. Editor/record confirmations remain local: saving an alias or sub-action dialog, applying a viewer record, and changing a queued message finish that specific edit. Audio downloads, creating a profile, backup/restore and explicit secret-clearing actions are not the global settings save. Profiles are labeled Create profile to distinguish them.
 
-Service connection tests and voice-loading actions use saved configuration. If the current service has pending changes, Save first; testing no longer silently persists those edits. OBS testing follows the same rule.
+Valid page settings apply in memory after a short editing debounce, without writing settings.json. Save makes them permanent. Invalid sections retain their last valid active values while their draft remains editable. Provider and OBS tests wait for live application rather than requiring Save. Live application affects future requests/playback; it does not regenerate speech already resolved or playing.
 
-Pending edits are held in memory, not an on-disk draft file. Do not exit without saving edits you want to retain.
+Right-click the title-bar Save button for Discard unsaved changes: controls return to the saved values and the backend's temporary overlay is cleared. Saving or discarding is serialized after any in-flight live request. Unrelated backend record saves exclude the temporary settings overlay, so creating an alias cannot accidentally persist unsaved settings. The overlay is session-only and is absent after restarting.
+
+Exceptions: listener ports/bindings, listener enablement and queue recovery need Save and restart. History retention requires Save because it can delete old audio/history. Action definitions and voice On/Off record edits retain their existing explicit confirmation/save flow; they are not runtime settings overlays. Local alias/sub-action editors still confirm their individual records. The port/recovery and retention controls explain these exceptions in their tooltips.
+
+Pending edits are held in memory, not an on-disk draft file. Exiting with pending page changes offers Save, Discard and Cancel. Save uses the global validation flow; invalid edits prevent exit. Discard exits without writing those drafts, and Cancel keeps them open. Minimizing/hiding to the tray does not prompt.
+
+Alias, playlist, pronunciation, profanity and sub-action editors also protect changed drafts when closed, including their Cancel/X/Escape paths. Save uses that editor's existing validation and confirmation; invalid edits stay open. Switching pages retains page drafts without prompting. These prompts do not protect against force-ending the process or losing power.

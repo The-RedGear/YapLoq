@@ -386,12 +386,16 @@ $script:lastPlaybackState=[pscustomobject]@{queue=@()}
 $window.Width=1800;$window.Height=1100;$window.Show();$window.UpdateLayout()
 $window.Dispatcher.Invoke([Action]{},[Windows.Threading.DispatcherPriority]::ContextIdle)
 Update-DashboardPreviewSpace;Update-YapLoqDashboard $script:lastPlaybackState
-if($script:dashboardUpcoming.Children.Count -le 10){throw 'Large Dashboard is still capped at ten recent speech entries'}
-$largeCount=$script:dashboardUpcoming.Children.Count
+if((Get-DashboardPreviewLimit 1100 350) -le 10 -or (Get-DashboardPreviewLimit 760 350) -ge (Get-DashboardPreviewLimit 1100 350)){throw 'Dashboard capacity does not expand/shrink with available space'}
+# The hosted desktop may clamp an oversized window. Test rendering against its
+# actual calculated capacity, not a presumed monitor resolution.
+if($script:dashboardUpcoming.Children.Count -ne [Math]::Min(30,$script:dashboardPreviewLimit)){throw 'Dashboard does not render its calculated capacity'}
+$script:dashboardPreviewLimit=20;Update-YapLoqDashboard $script:lastPlaybackState
+if($script:dashboardUpcoming.Children.Count -ne 20){throw 'Dashboard rendering is capped below its requested capacity'}
 $window.Width=1180;$window.Height=760;$window.UpdateLayout()
 $window.Dispatcher.Invoke([Action]{},[Windows.Threading.DispatcherPriority]::ContextIdle)
 Update-DashboardPreviewSpace;Update-YapLoqDashboard $script:lastPlaybackState
-if($script:dashboardUpcoming.Children.Count -ge $largeCount){throw 'Dashboard preview did not shrink with the window'}
+if($script:dashboardUpcoming.Children.Count -ne [Math]::Min(30,$script:dashboardPreviewLimit)){throw 'Resized Dashboard does not render its calculated capacity'}
 $batchStamp='2026-10-18T20:00:00Z'
 $batchRows=@([pscustomobject]@{Id='second';Timestamp=$batchStamp;SegmentIndex=1},[pscustomobject]@{Id='first';Timestamp=$batchStamp;SegmentIndex=0})
 if(((Sort-YapLoqSpeechRows $batchRows).Id -join ',') -ne 'second,first'){throw 'Multi-voice rows must be newest first, including saved timestamp ties'}
@@ -416,7 +420,7 @@ $script:queueSpeechStatus.SelectedItem='All speech'
 if(($script:unifiedQueueGrid.Items.Id -join ',') -ne 'chron-new,chron-old'){throw 'Clearing filters changed newest-first order'}
 $detailFixture=[pscustomobject]@{Alias='Mint voice';Status='Error';Time='Today';Source='Test';User='Viewer';Text='Full untruncated message';Error='Provider fixture failure'}
 $detailDialog=New-QueueMessageDetails $detailFixture
-if($detailDialog.Content.Child.Children[1].Text -ne $detailFixture.Text -or $detailDialog.Content.Child.Children[2].Text -notlike '*Provider fixture failure*'){throw 'Message details lost text or failure reason'}
+if($detailDialog.Resources['AppDialogBody'].Child.Children[1].Text -ne $detailFixture.Text -or $detailDialog.Resources['AppDialogBody'].Child.Children[2].Text -notlike '*Provider fixture failure*'){throw 'Message details lost text or failure reason'}
 $detailDialog.Close()
 $script:recentHistoryItems=@($newHistory,$oldHistory);Update-YapLoqDashboard ([pscustomobject]@{queue=@()})
 $finishedRow=@($script:dashboardUpcoming.Children|Where-Object {$_.Tag.Id -eq 'chron-old'})[0]

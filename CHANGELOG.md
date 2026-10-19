@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.0 — Assignments, multi-voice speech and live settings
+
+- Redesigned Assignments with special viewer voices, edit/delete, role/group defaults and an inline fallback voice.
+- Multi-voice chat tags, tolerant unambiguous alias matching, generate-ahead playback and optional sentence clips.
+- Stable queue/history ordering, search, message details and changing an ungenerated queued voice.
+- Global Save/Ctrl+S, live settings, Discard and unsaved-change protection for page/editor drafts.
+- Configuration backup bundles include viewer assignments, with validated restore and recovery copies.
+- Streamer.Bot automation improvements, categorized triggers and separate assignment-aware chat/command templates.
+- Consistent custom popup styling and corrected credential Show/Hide tracking.
+- Fixed packaged Amazon Polly endpoint/service data; packaged-runtime checks now validate AWS models and certificates offline.
+- Dashboard UI checks no longer presume the build runner's monitor size.
+
 ## 0.5.0 — Initial YapLoq release
 
 - Six-page desktop interface: Dashboard, Voices, Queue, Services, Streamer.Bot and Settings.

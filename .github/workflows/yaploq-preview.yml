@@ -10,8 +10,8 @@ jobs:
     if: github.ref == 'refs/heads/redesign/yaploq'
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Install
@@ -46,11 +46,11 @@ jobs:
         run: |
           $version = python -c "from voice_studio_speaker_bridge import __version__; import os; print(__version__ + '-preview.' + os.environ['GITHUB_RUN_NUMBER'])"
           python tools/package_update.py --source dist-preview/YapLoq-preview --output dist-updates/YapLoq-preview-Windows-x64-update.zip --version $version --channel preview
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: YapLoq-preview-Windows-${{ github.sha }}
           path: dist-preview/YapLoq-preview/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: YapLoq-preview-update-package-${{ github.sha }}
           path: dist-updates/YapLoq-preview-Windows-x64-update.zip

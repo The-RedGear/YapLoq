@@ -25,7 +25,7 @@ Streamer.bot lifecycle actions in one application.
 - Optional OBS audio ducking, normalization, fades and output tests
 - Live event inspector and private diagnostic exports
 
-**YapLoq 0.5.0 is the initial public release for Windows.** See
+**YapLoq 0.6.0 is available for Windows.** See
 [release notes](docs/RELEASE_NOTES.md), [the user guide](docs/USER_GUIDE.md),
 [Streamer.bot recipes](docs/STREAMERBOT.md), [provider adapters](docs/PROVIDERS.md),
 [legal notes](docs/LEGAL.md), and the [remaining release roadmap](ROADMAP.md).

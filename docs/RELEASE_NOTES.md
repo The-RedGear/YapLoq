@@ -1,6 +1,21 @@
-# YapLoq 0.5.0 — Initial release
+# YapLoq 0.6.0 — Assignments, multi-voice speech and live settings
 
 Voice automation for streamers, with a Windows desktop app and Streamer.Bot integration.
+
+## New in 0.6.0
+
+- Assign special voices to viewers using stable platform/user IDs. Edit/delete assignments, choose role/custom-group defaults, and set the fallback voice inline.
+- Use multiple aliases in one input, such as `[Plankton] Hello! [Spongebob] Hi!`. Chat tags support enabled voices, case-insensitive names and unambiguous word-prefixes. Optional sentence-per-clip generation is off by default in Settings.
+- Upcoming speech generates ahead of playback. Queue/history remain newest-first without promoting replayed recordings; search, inspect full message details, or change the voice of an ungenerated queued message.
+- Valid settings apply live. Save/Ctrl+S keeps changes; right-click Save to discard unsaved edits. Ports/recovery require Save and restart. Destructive retention and action/voice record changes retain explicit Save.
+- Unsaved-change prompts protect page and editor drafts. Popup title bars follow the app design; credential visibility toggles no longer mark settings dirty or disable themselves during live validation.
+- Configuration backups include settings, actions and viewer assignments, with validation and recovery copies on restore.
+- Expanded Streamer.Bot automations and categorized event triggers, plus separate assignment-aware chat and command templates.
+- Amazon Polly voices now load in the packaged Windows app: missing AWS endpoint/service data and certificate packaging are fixed and checked before release.
+
+### Integration notes
+
+Existing explicit/random-voice Streamer.Bot actions still override assignments. To use viewer defaults, import the assignment-aware templates and attach your own triggers. Custom groups must be supplied as a groups array by Streamer.Bot; YapLoq does not discover group membership automatically. Old name-only requests remain compatible. Existing legacy name rules are preserved but hidden from the role editor.
 
 ## What's included
 

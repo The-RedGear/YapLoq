@@ -71,8 +71,15 @@ class ViewerStore:
         platform, user_id = identity(data)
         with self.lock:
             records = self._read()
+            original = identity(data['originalIdentity']) if assign and data.get('originalIdentity') else (platform, user_id)
+            if original != (platform, user_id):
+                if original not in records:
+                    raise ValueError('The original viewer no longer exists. Refresh before editing.')
+                if (platform, user_id) in records:
+                    raise ValueError('That viewer ID already exists. Edit its existing assignment instead.')
             previous = records.get((platform, user_id))
-            entry = dict(previous or dict(platform=platform, userId=user_id, displayName='', login='', voice=''))
+            entry = dict(previous or records.get(original) or dict(platform=platform, userId=user_id, displayName='', login='', voice=''))
+            entry.update(platform=platform, userId=user_id)
             for field in ('displayName', 'login'):
                 value = str(data.get(field) or '').strip()
                 if value:
@@ -86,6 +93,8 @@ class ViewerStore:
             # or assignments changing require a durable write.
             if entry != previous:
                 records = dict(records)
+                if original != (platform, user_id):
+                    del records[original]
                 records[(platform, user_id)] = entry
                 self.path.parent.mkdir(parents=True, exist_ok=True)
                 temporary = self.path.with_suffix('.tmp')
@@ -95,3 +104,17 @@ class ViewerStore:
                 temporary.replace(self.path)
                 self._cache, self._stamp = records, self.path.stat().st_mtime_ns
             return dict(entry)
+
+    def delete(self, data: dict) -> bool:
+        key = identity(data)
+        with self.lock:
+            records = dict(self._read())
+            if key not in records:
+                return False
+            del records[key]
+            temporary = self.path.with_suffix('.tmp')
+            temporary.write_text(json.dumps(dict(version=1, viewers=list(records.values())), indent=2), encoding='utf-8')
+            shutil.copy2(self.path, self.path.with_suffix('.json.bak'))
+            temporary.replace(self.path)
+            self._cache, self._stamp = records, self.path.stat().st_mtime_ns
+            return True

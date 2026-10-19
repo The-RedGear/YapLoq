@@ -247,7 +247,7 @@ class BridgeServers:
                 routes = {"/speak": "Speak", "/stop": "Stop", "/clear": "Clear",
                           "/pause": "Pause", "/resume": "Resume", "/skip": "Stop", "/api/playback/seek": "Seek",
                           "/pause-after-current": "PauseAfterCurrent", "/clear-all": "ClearAll",
-                          "/api/profiles/load": "LoadProfile", "/api/viewers/set": "SetViewerVoice",
+                          "/api/profiles/load": "LoadProfile", "/api/viewers/set": "SetViewerVoice", "/api/viewers/delete": "DeleteViewerVoice",
                           '/api/viewers/command': 'ViewerVoiceCommand', '/api/viewers/public': 'GetPublicVoices',
                           "/api/history/clear": "ClearHistory", "/api/history/save": "SaveHistoryAudio", "/api/history/replay": "ReplayHistory", "/api/queue/remove": "RemoveSpeech",
                           "/api/queue/move": "MoveSpeech", "/api/queue/reorder": "ReorderSpeech", "/api/queue/voice": "ChangeSpeechVoice"}
@@ -255,9 +255,10 @@ class BridgeServers:
                 is_streamerbot_test = self.path.rstrip("/") == "/api/integrations/streamerbot/test"
                 is_udp_test = self.path.rstrip('/') == '/api/integrations/udp-test'
                 is_automation_save = self.path.rstrip('/') == '/api/automations/save'
+                is_runtime_settings = self.path.rstrip('/') == '/api/settings/runtime'
                 output_test = self.path.rstrip("/") == "/api/output/test"
                 maintenance_action = self.path.rstrip("/").removeprefix("/api/maintenance/") if self.path.startswith("/api/maintenance/") else ""
-                if command is None and not is_streamerbot_test and not is_udp_test and not is_automation_save and not maintenance_action and not output_test:
+                if command is None and not is_streamerbot_test and not is_udp_test and not is_automation_save and not is_runtime_settings and not maintenance_action and not output_test:
                     self._reply(404, {"ok": False, "error": "Not found"})
                     return
                 try:
@@ -268,6 +269,10 @@ class BridgeServers:
                     data = json.loads(raw.decode("utf-8"))
                     if not isinstance(data, dict):
                         raise ValueError("JSON body must be an object")
+                    if is_runtime_settings:
+                        result = bridge.settings.apply_runtime(None if data.get('reset') is True else data.get('settings'))
+                        self._reply(200, {'ok': True, 'result': result})
+                        return
                     if is_automation_save:
                         rules = validate_rules(data.get('rules'))
                         maintenance = Maintenance(bridge.settings, getattr(bridge.protocol, 'viewers', None))

@@ -278,6 +278,48 @@ function Initialize-AppBranding {
         if($image){$image.Source=$logo}
     }
 }
+function Set-AppDialogChrome($target) {
+    if($target.Resources['AppDialogChrome']){return}
+    $target.Resources['AppDialogChrome']=$true
+    $body=$target.Content;$target.Content=$null;$target.Resources['AppDialogBody']=$body
+    $target.WindowStyle='None';$target.AllowsTransparency=$true;$target.Background=[Windows.Media.Brushes]::Transparent
+    $target.Foreground=[Windows.Media.BrushConverter]::new().ConvertFromString('#EEEAF4')
+    $target.ShowInTaskbar=$false;$target.Icon=$window.Icon
+    $frame=[Windows.Controls.Border]::new();$frame.Background=[Windows.Media.BrushConverter]::new().ConvertFromString('#15131D');$frame.BorderBrush=$window.FindResource('Border');$frame.BorderThickness=1;$frame.CornerRadius=12
+    $layout=[Windows.Controls.Grid]::new();$frame.Child=$layout;$target.Content=$frame
+    foreach($height in @('48','*')){$row=[Windows.Controls.RowDefinition]::new();$row.Height=$height;[void]$layout.RowDefinitions.Add($row)}
+    $bar=[Windows.Controls.Border]::new();$bar.Background=[Windows.Media.BrushConverter]::new().ConvertFromString('#1B1824');$bar.BorderBrush=$frame.BorderBrush;$bar.BorderThickness='0,0,0,1';$bar.CornerRadius='12,12,0,0';[void]$layout.Children.Add($bar)
+    $header=[Windows.Controls.Grid]::new();$header.Margin='16,0,8,0';$bar.Child=$header
+    foreach($width in @('*','Auto')){$column=[Windows.Controls.ColumnDefinition]::new();$column.Width=$width;[void]$header.ColumnDefinitions.Add($column)}
+    $drag=[Windows.Controls.StackPanel]::new();$drag.Orientation='Horizontal';$drag.VerticalAlignment='Center';[void]$header.Children.Add($drag)
+    $logo=[Windows.Controls.Image]::new();$logo.Width=20;$logo.Height=20;$logo.Margin='0,0,9,0'
+    $logo.Source=[Windows.Media.Imaging.BitmapImage]::new([Uri]::new((Join-Path $resourceRoot 'assets\YapLoq-logo.png')));[void]$drag.Children.Add($logo)
+    $title=[Windows.Controls.TextBlock]::new();$title.Text=if($target.Title){$target.Title}else{'YapLoq'};$title.FontSize=14;$title.FontWeight='SemiBold';$title.VerticalAlignment='Center';[void]$drag.Children.Add($title)
+    $drag.Add_MouseLeftButtonDown({param($sender,$e)if($e.LeftButton -eq 'Pressed'){[Windows.Window]::GetWindow($sender).DragMove()}})
+    $close=[Windows.Controls.Button]::new();$close.Width=34;$close.Height=30;$close.Padding=0;$close.Background=[Windows.Media.Brushes]::Transparent;$close.BorderThickness=0;$close.ToolTip='Close'
+    $close.Style=$window.FindResource('PlayerIconButton')
+    $cross=[Windows.Shapes.Path]::new();$cross.Data=[Windows.Media.Geometry]::Parse('M2,2 L14,14 M14,2 L2,14');$cross.Stroke=$target.Foreground;$cross.StrokeThickness=1.8;$cross.Width=16;$cross.Height=16;$close.Content=$cross
+    [Windows.Automation.AutomationProperties]::SetName($close,'Close '+$title.Text)
+    $close.Add_Click({param($sender,$e)[Windows.Window]::GetWindow($sender).Close()});[Windows.Controls.Grid]::SetColumn($close,1);[void]$header.Children.Add($close)
+    [Windows.Controls.Grid]::SetRow($body,1);[void]$layout.Children.Add($body)
+}
+
+function Show-AppConfirmation($owner,[string]$message,[string]$title){
+    $dialog=[Windows.Window]::new();$dialog.Owner=$owner;$dialog.Title=$title;$dialog.Width=490;$dialog.SizeToContent='Height';$dialog.ResizeMode='NoResize';$dialog.WindowStartupLocation='CenterOwner'
+    $dialog.Resources.MergedDictionaries.Add($window.Resources)
+    $panel=[Windows.Controls.StackPanel]::new();$panel.Margin=24;$dialog.Content=$panel
+    $text=[Windows.Controls.TextBlock]::new();$text.Text=$message;$text.TextWrapping='Wrap';[void]$panel.Children.Add($text)
+    $buttons=[Windows.Controls.StackPanel]::new();$buttons.Orientation='Horizontal';$buttons.HorizontalAlignment='Right';$buttons.Margin='0,20,0,0';[void]$panel.Children.Add($buttons)
+    $dialog.Resources['Confirmed']=$false
+    foreach($label in @('Cancel','Continue')){
+        $button=[Windows.Controls.Button]::new();$button.Content=$label;$button.Margin='8,0,0,0'
+        if($label -eq 'Continue'){$button.Style=$window.FindResource('PrimaryButton')}
+        $button.Add_Click({param($sender,$e)$d=[Windows.Window]::GetWindow($sender);$d.Resources['Confirmed']=$sender.Content -eq 'Continue';$d.Close()});[void]$buttons.Children.Add($button)
+    }
+    Apply-AppFont $dialog
+    [void]$dialog.ShowDialog();return [bool]$dialog.Resources['Confirmed']
+}
+
 function Apply-AppFont($target) {
     if ($target -is [Windows.Window]) { [YapLoqRoundedChrome]::Attach($target) }
     if (-not $script:appFontFamily) {
@@ -289,6 +331,7 @@ function Apply-AppFont($target) {
     $target.Resources[[Windows.SystemFonts]::MessageFontFamilyKey] = $script:appFontFamily
     Set-ControlAccessibility $target
     if ($target -is [Windows.Window] -and $target -ne $window) {
+        if($target.WindowStyle -ne 'None'){Set-AppDialogChrome $target}
         # Dialogs use the same rounded control states as the main window.
         foreach ($controlType in @([Windows.Controls.Button],[Windows.Controls.TextBox],[Windows.Controls.PasswordBox],[Windows.Controls.ComboBox],[Windows.Controls.ComboBoxItem],[Windows.Controls.ListBox],[Windows.Controls.ListBoxItem],[Windows.Controls.CheckBox],[Windows.Controls.Slider],[Windows.Controls.Primitives.ScrollBar],[Windows.Controls.Primitives.ResizeGrip],[Windows.Controls.ToolTip],[Windows.Controls.ContextMenu],[Windows.Controls.MenuItem],[Windows.Controls.Separator])) {
             $sharedStyle = $window.TryFindResource($controlType)
@@ -304,6 +347,7 @@ function Apply-AppFont($target) {
         $target.MaxHeight = [Windows.SystemParameters]::WorkArea.Height - 24
         $target.Icon=$window.Icon
         $target.Add_KeyDown({param($sender,$e) if($e.Key -eq 'Escape'){$sender.Close()}})
+        if(Get-Command Install-EditorCloseGuard -ErrorAction SilentlyContinue){Install-EditorCloseGuard $target}
     }
 }
 function Set-PreviewSettings($value) {
@@ -1718,10 +1762,12 @@ function Refresh-Grid([switch]$VoicesOnly) {
     }
     if ($settings.role_voice_rules) {
         foreach ($entry in $settings.role_voice_rules.PSObject.Properties) {
-            $voiceRuleRows.Add([pscustomobject]@{ field='role'; value=[string]$entry.Name; alias=[string]$entry.Value })
+            $isGroup=([string]$entry.Name).StartsWith('group:')
+            $voiceRuleRows.Add([pscustomobject]@{ field=$(if($isGroup){'group'}else{'role'}); value=$(if($isGroup){([string]$entry.Name).Substring(6)}else{[string]$entry.Name}); alias=[string]$entry.Value })
         }
     }
     $VoiceRulesGrid.ItemsSource = $voiceRuleRows
+    if($script:viewerPage){$roleView=[Windows.Data.CollectionViewSource]::GetDefaultView($VoiceRulesGrid.ItemsSource);if($roleView -and $roleView.CanFilter){$roleView.Filter=[Predicate[object]]{param($row)$row.field -ne 'user'}}}
     if ($VoiceRuleFieldBox.SelectedIndex -lt 0) { $VoiceRuleFieldBox.SelectedIndex = 0 }
     $pronunciations = New-Object System.Collections.ObjectModel.ObservableCollection[object]
     $hidden = @($settings.hidden_pronunciations)
@@ -1756,7 +1802,14 @@ function Refresh-Grid([switch]$VoicesOnly) {
 function Refresh-Voices {
     if($script:globalSaveInstalled){
         $group=@{voicestudio='VoiceStudio';polly='Polly';elevenlabs='ElevenLabs';azure='Azure';google='Google';watson='Watson';uberduck='UberDuck';ttsmonster='TTS.Monster';acapela='Acapela';cereproc='CereProc'}[$script:activePage]
-        if($group){Update-GlobalSaveGroup $group;if($script:globalSaveGroups[$group].Dirty){$BottomStatus.Text='Save '+$group+' changes before testing or loading voices.';return}}
+        if($group){
+            Update-GlobalSaveGroup $group
+            if($script:globalSaveGroups[$group].Dirty){
+                if(-not $script:liveSettingsInstalled){$BottomStatus.Text='Save '+$group+' changes before testing or loading voices.';return}
+                if(-not $script:liveSettingsReady){Invoke-AfterLiveSettings {Refresh-Voices};return}
+                if(-not $script:liveValidGroups.ContainsKey($group) -or $script:liveValidGroups[$group].Fingerprint -ne (Get-GlobalSaveFingerprint $script:globalSaveGroups[$group])){$BottomStatus.Text='Correct invalid '+$group+' settings before testing. Previous valid settings remain active.';return}
+            }
+        }
     }
     if ($script:voiceRefreshTask -and -not $script:voiceRefreshTask.IsCompleted) { return }
     $BottomStatus.Text = 'Loading voices...'
@@ -2910,7 +2963,8 @@ function Save-Rules {
             $match = [string]$row.value
             $alias = [string]$row.alias
             if (-not $match.Trim() -or -not $alias.Trim()) { continue }
-            if ([string]$row.field -eq 'role') { $roleVoiceMap[$match.Trim()] = $alias.Trim() }
+            if ([string]$row.field -eq 'group') { $roleVoiceMap['group:'+$match.Trim().ToLowerInvariant()] = $alias.Trim() }
+            elseif ([string]$row.field -eq 'role') { $roleVoiceMap[$match.Trim()] = $alias.Trim() }
             else { $userVoiceMap[$match.Trim()] = $alias.Trim() }
         }
         Set-JsonProperty $s 'user_voice_rules' ([pscustomobject]$userVoiceMap)
@@ -3033,7 +3087,7 @@ function Test-QueueControl {
 function Invoke-SavedServiceTest([string]$group,[string]$legacySave){
     if($script:globalSaveInstalled){
         Update-GlobalSaveGroup $group
-        if($script:globalSaveGroups[$group].Dirty){$BottomStatus.Text='Save '+$group+' changes before testing.';return}
+        if($script:globalSaveGroups[$group].Dirty -and -not $script:liveSettingsInstalled){$BottomStatus.Text='Save '+$group+' changes before testing.';return}
     }else{& $legacySave}
     Refresh-Voices
 }
@@ -3322,6 +3376,7 @@ function Show-AliasDialog($existing) {
     [void]$identityRow.Children.Add($iconBadge);[void]$identityRow.Children.Add($nameField);[void]$identityRow.Children.Add($favoriteField);$editorPanel.Children.Insert($nameIndex,$identityRow)
     $paletteRow=[Windows.Controls.WrapPanel]::new();$paletteRow.Margin='0,0,0,16'
     $paletteRow.Tag=$editorColor
+    $paletteRow.Resources['EditorDraftValue']=$true
     $colorNames=@('Rose','Peach','Gold','Lime','Mint','Teal','Blue','Indigo','Violet','Orchid')
     $palette=@('#E6A0B1','#E8AD91','#E4CA8B','#A9C98C','#87C9AF','#86C6CB','#91B4E4','#A4A4E8','#B6A3FF','#D3A0D5')
     for($i=0;$i -lt $palette.Count;$i++){
@@ -4043,7 +4098,11 @@ function Set-ObsSettings($settings) {
 }
 $TestObsButton.Add_Click({
     try {
-        if($script:globalSaveInstalled){Update-GlobalSaveGroup 'Settings';if($script:globalSaveGroups.Settings.Dirty){$BottomStatus.Text='Save audio/OBS settings before testing.';return}}
+        if($script:globalSaveInstalled){Update-GlobalSaveGroup 'Settings';if($script:globalSaveGroups.Settings.Dirty){
+            if(-not $script:liveSettingsInstalled){$BottomStatus.Text='Save audio/OBS settings before testing.';return}
+            if(-not $script:liveSettingsReady){Invoke-AfterLiveSettings {$TestObsButton.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))};return}
+            if(-not $script:liveValidGroups.ContainsKey('Settings') -or $script:liveValidGroups.Settings.Fingerprint -ne (Get-GlobalSaveFingerprint $script:globalSaveGroups.Settings)){$BottomStatus.Text='Correct invalid audio/OBS settings before testing.';return}
+        }}
         else{$s=Read-Settings;Set-ObsSettings $s;Write-Settings $s;$ObsPasswordBox.Password=''}
         $selected=$ObsInputBox.Text
         $result=(Invoke-BridgePost '/api/maintenance/obs-inputs').result
@@ -4293,7 +4352,7 @@ $RestoreBackupButton.Add_Click({
     if (-not $BackupListBox.SelectedItem) { $BottomStatus.Text = 'Choose a backup first.'; return }
     $legacy=([string]$BackupListBox.SelectedItem).EndsWith('.json',[StringComparison]::OrdinalIgnoreCase)
     $warning=if($legacy){'This legacy backup replaces settings and actions only. Viewer assignments stay unchanged.'}else{'This backup replaces settings, actions and viewer assignments.'}
-    if([Windows.MessageBox]::Show($window,($warning+"`nA recovery backup is saved first. Continue?"),'Restore backup','YesNo','Warning') -ne 'Yes'){return}
+    if(-not (Show-AppConfirmation $window ($warning+"`nA recovery backup is saved first. Continue?") 'Restore backup')){return}
     try {
         Invoke-BridgePost '/api/maintenance/restore' @{filename=[string]$BackupListBox.SelectedItem} | Out-Null
         Refresh-Grid; Refresh-BackupList
@@ -4426,7 +4485,13 @@ $script:progressTimer.Add_Tick({
 })
 $script:stateTimer.Start()
 $script:progressTimer.Start()
+$window.Add_Closing({param($sender,$e)
+    try{if(-not (Confirm-GlobalSaveExit)){$e.Cancel=$true;$script:allowClose=$false}}
+    catch{$e.Cancel=$true;$script:allowClose=$false;$BottomStatus.Text='Unable to check pending changes. Save your edits before exiting.'}
+})
 $window.Add_Closed({
+    foreach($timer in @($script:liveSettingsDebounce,$script:liveSettingsPump)){if($timer){$timer.Stop()}}
+    if($script:liveSettingsClient){$script:liveSettingsClient.CancelAsync();$script:liveSettingsClient.Dispose()}
     $script:stateTimer.Stop()
     foreach ($client in @($script:playerStateClient,$script:playerHistoryClient,$script:activityClient)) { if ($client) { $client.CancelAsync(); $client.Dispose() } }
     if ($script:progressTimer) { $script:progressTimer.Stop() }
@@ -4458,6 +4523,8 @@ Install-ProfanityEditor
 . (Join-Path $resourceRoot 'assets\YapLoqShell.ps1')
 Install-YapLoqShell
 try { Refresh-Grid } catch { $BottomStatus.Text = 'Could not load settings: ' + $_.Exception.Message }
+foreach($group in $script:globalSaveGroups.Values){Reset-GlobalSaveGroup $group.Key}
+Install-LiveSettings
 Start-Backend
 
 $window.Add_ContentRendered({

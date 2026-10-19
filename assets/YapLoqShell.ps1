@@ -512,12 +512,17 @@ function New-YapLoqRefreshButton {
     return $button
 }
 
+function Get-DashboardPreviewLimit([double]$height,[double]$editorHeight){
+    if([double]::IsNaN($height) -or [double]::IsInfinity($height) -or [double]::IsNaN($editorHeight) -or [double]::IsInfinity($editorHeight)){return 6}
+    return [int][Math]::Max(6,[Math]::Min(200,[Math]::Floor(($height-$editorHeight-60)/34)))
+}
+
 function Update-DashboardPreviewSpace {
     if(-not $script:dashboardViewport -or -not $script:dashboardEditor){return}
     $height=[Math]::Max(0,$script:dashboardViewport.ViewportHeight)
     if([double]::IsNaN($height) -or [double]::IsInfinity($height)){return}
     $PlaygroundPage.MinHeight=$height
-    $limit=[int][Math]::Max(6,[Math]::Min(200,[Math]::Floor(($height-$script:dashboardEditor.ActualHeight-60)/34)))
+    $limit=Get-DashboardPreviewLimit $height $script:dashboardEditor.ActualHeight
     if($limit -ne $script:dashboardPreviewLimit){$script:dashboardPreviewLimit=$limit;Update-YapLoqDashboard $script:lastPlaybackState}
 }
 
@@ -783,6 +788,7 @@ function New-QueueMessageDetails($row) {
     $close=[Windows.Controls.Button]::new();$close.Content='Close';$close.IsCancel=$true;$close.HorizontalAlignment='Right';$close.Margin='0,12,0,0';$close.Add_Click({param($sender,$e)[Windows.Window]::GetWindow($sender).Close()});[Windows.Controls.Grid]::SetRow($close,3);[void]$grid.Children.Add($close)
     $heading.Text="Message details`n"+$heading.Text
     $heading.Add_MouseLeftButtonDown({param($sender,$e)if($e.LeftButton -eq 'Pressed'){[Windows.Window]::GetWindow($sender).DragMove()}})
+    Set-AppDialogChrome $dialog
     Apply-AppFont $dialog
     return $dialog
 }

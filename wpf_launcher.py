@@ -32,6 +32,28 @@ def _run_backend() -> int:
     return int(main() or 0)
 
 
+def _verify_polly_runtime() -> dict:
+    """Validate SDK data/client construction offline, including frozen builds."""
+    import boto3
+    from botocore.loaders import create_loader
+    from botocore.httpsession import get_cert_path
+    loader = create_loader()
+    if not loader.load_data('endpoints').get('partitions'):
+        raise RuntimeError('Amazon Polly endpoint data is missing from this package')
+    for service in ('polly', 'sts', 'sso', 'sso-oidc'):
+        loader.load_service_model(service, 'service-2')
+    if not Path(get_cert_path(True)).is_file():
+        raise RuntimeError('AWS certificate bundle is missing from this package')
+    client = boto3.client('polly', region_name='us-east-1',
+                          aws_access_key_id='offline-check', aws_secret_access_key='offline-check')
+    try:
+        for operation in ('DescribeVoices', 'SynthesizeSpeech'):
+            client.meta.service_model.operation_model(operation)
+        return dict(ok=True, endpoint=client.meta.endpoint_url)
+    finally:
+        client.close()
+
+
 def _verify_package(output: Path) -> int:
     """Check the actual frozen distribution without devices, servers or credentials."""
     result = {"ok": False}
@@ -73,6 +95,7 @@ def _verify_package(output: Path) -> int:
             pcm, duration = AudioPlayer().decode_wav(stream.getvalue())
         if not pcm or duration <= 0:
             raise RuntimeError("Packaged audio decoder failed")
+        result['pollyRuntime'] = _verify_polly_runtime()
         result.update(ok=True, version=__version__, providers=list(registry.providers),
                       checkedResources=len(resources), durationMs=duration,
                       frozen=bool(getattr(sys, "frozen", False)))
@@ -112,6 +135,7 @@ def _self_test(output: Path) -> int:
         pause.tail = "is ready."
         ssml_wav = client.synthesize_wav(ElementTree.tostring(root, encoding="unicode"),
             VoiceAlias("Check", provider="windows", voice_id=voices[0]["voice_id"], ssml=True))
+        result['pollyRuntime'] = _verify_polly_runtime()
         result.update(ok=True, version=__version__, providers=list(registry.providers),
                       wavBytes=len(wav), pcmBytes=len(pcm), durationMs=duration, ssmlWavBytes=len(ssml_wav))
     except Exception as exc:

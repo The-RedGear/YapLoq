@@ -133,18 +133,21 @@ def test_platform_templates_include_identity_and_no_auto_triggers(platform):
     from voice_studio_speaker_bridge.streamerbot_export import export_viewer_commands, export_actions
     envelope = json.loads(gzip.decompress(base64.b64decode(export_viewer_commands(6670, platform))[4:]))
     actions = envelope['data']['actions']
-    assert len(actions) == 2
+    assert len(actions) == 3
     normal = json.loads(gzip.decompress(base64.b64decode(export_actions(6670, ''))[4:]))
     normal_ids = {action['id'] for action in normal['data']['actions']}
-    assert len({action['id'] for action in actions}) == 2
+    assert len({action['id'] for action in actions}) == 3
     for action in actions:
         assert action['id'] not in normal_ids
         assert action['triggers'] == [] and not action['alwaysRun']
         payload = action['actions'][0]['payload']
         assert (platform or '%commandSource%') in payload
-        assert all(token in payload for token in ['%userId%', '%userName%', '%role%', '%isSubscribed%', '%isVip%', '%isModerator%', '%rawInput%'])
+        assert all(token in payload for token in ['%userId%', '%userName%', '%role%', '%isSubscribed%', '%isVip%', '%isModerator%'])
     assert actions[0]['actions'][0]['payload'].endswith('!voice %rawInput%')
     assert actions[1]['actions'][0]['payload'].startswith('YAPLOQ2\r\n\r\n')
+    assert actions[1]['actions'][0]['payload'].endswith('%rawInput%')
+    assert actions[2]['actions'][0]['payload'].startswith('YAPLOQ2\r\n\r\n')
+    assert actions[2]['actions'][0]['payload'].endswith('%message%')
     assert envelope['meta']['autoRunAction'] is None
 
 

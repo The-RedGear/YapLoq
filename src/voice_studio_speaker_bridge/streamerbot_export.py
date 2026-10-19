@@ -78,8 +78,13 @@ def export_viewer_commands(port: int, platform: str = '') -> str:
     speech['actions'][0]['id'] = _id('subaction/Viewer assigned speech/' + platform)
     speech['actions'][0]['payload'] = ('YAPLOQ2\r\n\r\n' + event_platform + '\r\n%userId%\r\n%userName%\r\n%role%\r\n'
                                      '%isSubscribed%\r\n%isVip%\r\n%isModerator%\r\n%rawInput%')
-    envelope['data']['actions'] = [action, speech]
+    chat = json.loads(json.dumps(speech))
+    chat['id'] = _id('action/Viewer assigned chat/' + platform)
+    chat['name'] = 'YapLoq - Chat using viewer assignment' + suffix
+    chat['actions'][0]['id'] = _id('subaction/Viewer assigned chat/' + platform)
+    chat['actions'][0]['payload'] = chat['actions'][0]['payload'].replace('%rawInput%', '%message%')
+    envelope['data']['actions'] = [action, speech, chat]
     envelope['meta']['name'] = 'YapLoq viewer voice command'
-    envelope['meta']['description'] = 'Attach a Command Triggered trigger for a Starts With !voice command to Viewer voice command. Attach your separate speech command (for example !say) to Speak using viewer assignment. Enable viewer commands in YapLoq Assignments. Import does not create or run triggers. Use viewer result events in YapLoq Actions to run your own Streamer.Bot reply actions; ttsReply, ttsPlatform and ttsUserId are supplied.'
+    envelope['meta']['description'] = 'Attach a Command Triggered trigger for a Starts With !voice command to Viewer voice command. Attach your separate speech command (for example !say) to Speak using viewer assignment. For ordinary chat messages, attach Chat using viewer assignment instead; it sends message, not rawInput. Do not attach both speech actions to the same input. Enable viewer commands in YapLoq Assignments only if using !voice. Import does not create or run triggers. Use viewer result events in YapLoq Actions to run your own Streamer.Bot reply actions; ttsReply, ttsPlatform and ttsUserId are supplied.'
     binary = b'SBAE' + gzip.compress(json.dumps(envelope, ensure_ascii=False, separators=(',', ':')).encode('utf-8'), mtime=0)
     return base64.b64encode(binary).decode('ascii')

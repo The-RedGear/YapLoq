@@ -9,8 +9,8 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Install build dependencies
@@ -50,11 +50,11 @@ jobs:
         run: |
           $version = python -c "from voice_studio_speaker_bridge import __version__; print(__version__)"
           python tools/package_update.py --source dist/YapLoq --output dist-updates/YapLoq-Windows-x64-update.zip --version $version --channel stable
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: YapLoq-Windows-x64
           path: dist/YapLoq/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: YapLoq-stable-update-package
           path: dist-updates/YapLoq-Windows-x64-update.zip

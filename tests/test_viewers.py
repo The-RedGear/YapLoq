@@ -33,6 +33,18 @@ def test_assignment_persists_in_data_and_reloads(protocol):
     assert protocol.execute('GetViewerVoice', dict(platform='twitch', userId='123'))['assignmentOrigin'] == 'Viewer preference'
 
 
+def test_correct_identity_moves_assignment_atomically_without_overwriting(protocol):
+    assign(protocol)
+    protocol.execute('SetViewerVoice', dict(platform='twitch', userId='456', voice='Other', originalIdentity=dict(platform='twitch', userId='123')))
+    assert protocol.viewers.get('twitch', '123') is None
+    assert protocol.viewers.get('twitch', '456')['voice'] == 'Other'
+    assign(protocol)
+    before = protocol.viewers.path.read_bytes()
+    with pytest.raises(ValueError, match='already exists'):
+        protocol.execute('SetViewerVoice', dict(platform='twitch', userId='456', voice='', originalIdentity=dict(platform='twitch', userId='123')))
+    assert protocol.viewers.path.read_bytes() == before
+
+
 def test_identical_names_different_ids_platforms_and_id_case_do_not_merge(protocol):
     for platform, user_id in [('twitch', '123'), ('twitch', '456'), ('youtube', '123'), ('youtube', 'AbC'), ('youtube', 'abc')]:
         protocol.execute('SetViewerVoice', dict(platform=platform, userId=user_id, displayName='Same name', voice='Other'))
@@ -59,6 +71,35 @@ def test_reset_uses_existing_routing_default(protocol):
     protocol.execute('Speak', dict(platform='twitch', userId='123', user='name', message='Hi'))
     assert protocol.engine.enqueue.call_args.args[1].name == 'EventVoice'
     assert protocol.viewers.get('twitch', '123')['voice'] == ''
+    assert protocol.execute('GetViewers', {})['viewers'] == []
+
+
+def test_default_speech_does_not_create_assignment_records(protocol):
+    protocol.execute('Speak', dict(platform='twitch', userId='123', user='Default viewer', message='Hi'))
+    assert protocol.viewers.all() == []
+    assert protocol.execute('GetViewers', {})['viewers'] == []
+
+
+def test_delete_assignment_keeps_backup_and_default_speech_does_not_recreate_it(protocol):
+    assign(protocol)
+    assert protocol.execute('DeleteViewerVoice', dict(platform='twitch', userId='123'))['deleted']
+    assert protocol.viewers.get('twitch', '123') is None
+    assert json.loads(protocol.viewers.path.with_suffix('.json.bak').read_text())['viewers'][0]['voice'] == 'Other'
+    protocol.execute('Speak', dict(platform='twitch', userId='123', message='Hi'))
+    assert protocol.execute('GetViewers', {})['viewers'] == []
+    assert not protocol.execute('DeleteViewerVoice', dict(platform='twitch', userId='123'))['deleted']
+
+
+def test_role_flags_and_structured_custom_groups_choose_defaults(protocol):
+    protocol.settings.role_voice_rules = {'vip': 'Other', 'moderator': 'EventVoice', 'group:special guests': 'Other'}
+    protocol.execute('Speak', dict(message='Hi', isVip=True))
+    assert protocol.engine.enqueue.call_args.args[1].name == 'Other'
+    protocol.execute('Speak', dict(message='Hi', isVip=True, isModerator=True))
+    assert protocol.engine.enqueue.call_args.args[1].name == 'EventVoice'
+    protocol.execute('Speak', dict(message='Hi', isModerator=True, groups=['Special Guests']))
+    assert protocol.engine.enqueue.call_args.args[1].name == 'Other'
+    protocol.execute('Speak', dict(message='Hi', isModerator=True, groups='Special Guests'))
+    assert protocol.engine.enqueue.call_args.args[1].name == 'EventVoice'
 
 
 def test_playlist_assignment_uses_enabled_members(protocol):

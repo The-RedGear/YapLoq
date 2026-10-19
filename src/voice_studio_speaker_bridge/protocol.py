@@ -8,8 +8,8 @@ from dataclasses import replace
 from .settings import Settings
 from . import __version__
 from .viewers import ViewerStore, identity
-from .public_voices import eligible_voices, public_label
-from .multi_voice import split_voices
+from .public_voices import eligible_voices, public_label, viewer_roles
+from .multi_voice import split_voices, normalized_voice_name, sentence_clips
 
 
 import json
@@ -229,14 +229,16 @@ class SpeakerBotProtocol:
             self.viewers.update(dict(platform=platform, userId=user_id, displayName=display, login=login, voice=alias.name),
                                 assign=True, assignment_source='viewer')
             return dict(handled=True, action='assigned', voice=public_label(alias), reply='Your voice is now ' + public_label(alias) + '.')
-        if normalized in {'getviewers', 'getviewervoice', 'setviewervoice'}:
+        if normalized in {'getviewers', 'getviewervoice', 'setviewervoice', 'deleteviewervoice'}:
             self.settings.reload_if_changed()
             if normalized == 'getviewers':
-                return dict(viewers=[self._viewer_info(entry) for entry in self.viewers.all()],
+                return dict(viewers=[self._viewer_info(entry) for entry in self.viewers.all() if entry.get('voice')],
                             defaultVoice=self.settings.assignment_default_voice,
                             voices=[voice.name for voice in self.settings.aliases.values() if voice.enabled] +
                                    ['playlist:' + name for name in self.settings.voice_playlists] + ['random'])
             platform, user_id = identity(data)
+            if normalized == 'deleteviewervoice':
+                return dict(deleted=self.viewers.delete(data), platform=platform, userId=user_id)
             if normalized == 'setviewervoice':
                 selector = str(data.get('voice') or '').strip()
                 if selector:
@@ -322,8 +324,19 @@ class SpeakerBotProtocol:
                 rule_alias = self.settings.user_voice_rules.get(key)
                 if rule_alias:
                     break
-            if not rule_alias and role:
-                rule_alias = self.settings.role_voice_rules.get(role)
+            if not rule_alias:
+                roles = viewer_roles(data) | {role}
+                groups = data.get('groups', [])
+                groups = {value.strip().casefold() for value in groups if isinstance(value, str)} if isinstance(groups, list) else set()
+                for key, selector in self.settings.role_voice_rules.items():
+                    if key.startswith('group:') and key[6:].casefold() in groups:
+                        rule_alias = selector
+                        break
+                if not rule_alias:
+                    for candidate in ('broadcaster', 'moderator', 'vip', 'subscriber', role):
+                        if candidate in roles and self.settings.role_voice_rules.get(candidate):
+                            rule_alias = self.settings.role_voice_rules[candidate]
+                            break
             if explicit_voice:
                 alias = self.resolve_alias(explicit_voice)
             elif viewer_voice is not None:
@@ -357,28 +370,47 @@ class SpeakerBotProtocol:
             metadata = dict(platform=viewer_key[0], user_id=viewer_key[1], display_name=user) if viewer_key else {}
             if priority:
                 metadata['priority'] = priority
-            if viewer_key:
+            if viewer_key and saved_viewer and saved_viewer.get('voice'):
                 self.viewers.update(dict(platform=viewer_key[0], userId=viewer_key[1], displayName=user_display, login=user_login))
             def tagged_alias(name):
-                candidates = list(eligible_voices(self.settings, data)) if viewer_key else list(self.settings.aliases.values())
-                label = public_label if viewer_key else lambda voice: voice.name
-                if viewer_key:
+                all_enabled = bool(viewer_key and self.settings.chat_voice_tags_all_enabled)
+                restricted = bool(viewer_key and not all_enabled)
+                candidates = list(eligible_voices(self.settings, data)) if restricted else [voice for voice in self.settings.aliases.values() if not viewer_key or voice.enabled]
+                label = public_label if restricted else lambda voice: voice.name
+                if restricted:
                     selected = next((voice for voice in candidates
                                      if public_label(voice).casefold() == name.casefold()), None)
                 else:
                     selected = self.settings.get_alias(name)
+                    if all_enabled and selected and not selected.enabled:
+                        selected = None
+                    if all_enabled and selected is None:
+                        public_matches = [voice for voice in candidates if public_label(voice).casefold() == name.casefold()]
+                        if len(public_matches) == 1:
+                            selected = public_matches[0]
                 if selected is None:
                     matches = [voice for voice in candidates if label(voice).casefold().startswith(name.casefold() + ' ')]
                     if len(matches) == 1:
                         selected = matches[0]
                 if selected is None:
+                    normalized_name = normalized_voice_name(name)
+                    exact = [voice for voice in candidates if normalized_voice_name(label(voice)) == normalized_name]
+                    partial = [voice for voice in candidates if len(normalized_name) >= 2 and normalized_voice_name(label(voice)).startswith(normalized_name + ' ')]
+                    matches = exact or partial
+                    if len(matches) == 1:
+                        selected = matches[0]
+                if selected is None:
                     if not viewer_key:
                         raise ValueError(f'Voice tag [{name}] was not found. Use the full alias name from Voices.')
-                    raise ValueError('A voice tag is unavailable. Check its name and viewer access.')
+                    raise ValueError('A voice tag is unavailable. Check its name, enabled state and chat voice-tag access setting.')
                 return replace(selected, **overrides) if overrides else selected
             segments = split_voices(text, alias, tagged_alias)
             if len(segments) > 1 and any(voice.ssml for _, voice in segments):
                 raise ValueError('Multi-voice input currently supports plain text, not SSML')
+            if self.settings.split_speech_sentences:
+                segments = [(clip, voice) for segment, voice in segments for clip in ([segment] if voice.ssml else sentence_clips(segment))]
+                if len(segments) > 50:
+                    raise ValueError('Sentence splitting allows at most 50 clips per input. Shorten the message or turn it off.')
             if len(segments) == 1:
                 segment_text, segment_alias = segments[0]
                 job = self.engine.enqueue(segment_text, segment_alias, source=source, user=moderation_user, **metadata)

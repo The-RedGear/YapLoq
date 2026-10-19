@@ -1344,7 +1344,7 @@
          <Expander Name="AutoVoiceRulesExpander" Header="Automatic voice rules" IsExpanded="False" Style="{StaticResource SettingsExpander}">
          <StackPanel Margin="4,8,4,4">
           <TextBlock TextWrapping="Wrap" Foreground="{StaticResource Muted}" Margin="0,0,0,12"
-                     Text="Fallbacks for name-only integrations and roles. Explicit voices, saved viewer preferences and conditional voice rules take precedence. Names match case-insensitively." />
+                     Text="Choose voices for Broadcaster, Moderators, VIPs, Subscribers or custom groups. Streamer.Bot must send role flags or a groups list. Saved viewer assignments and explicit voices take precedence. Legacy name rules are preserved but hidden." />
           <DataGrid Name="VoiceRulesGrid" Height="185" AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single">
            <DataGrid.Columns>
             <DataGridTextColumn Header="WHEN" Binding="{Binding field}" Width="90" ElementStyle="{StaticResource GridText}"/>
@@ -1369,7 +1369,7 @@
            </StackPanel>
            <StackPanel Grid.Column="2">
             <TextBlock Text="Matches exactly"/>
-            <TextBox Name="VoiceRuleValueBox" Margin="0,6,0,0" ToolTip="For User, use the Twitch display name that %user% resolves to (or the login)."/>
+            <ComboBox Name="VoiceRuleValueBox" IsEditable="True" Margin="0,6,0,0" ToolTip="Choose a role, or type a custom group name"><ComboBoxItem Content="broadcaster"/><ComboBoxItem Content="moderator"/><ComboBoxItem Content="vip"/><ComboBoxItem Content="subscriber"/></ComboBox>
            </StackPanel>
            <StackPanel Grid.Column="4">
             <TextBlock Text="Use voice"/>

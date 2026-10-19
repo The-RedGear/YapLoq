@@ -1,4 +1,202 @@
 # Event-driven pending-edit tracking. Never scan pages from the playback timer.
+function script:Get-LiveSettingsDraft {
+    $base=Read-Settings
+    $oldStatus=$BottomStatus.Text
+    $script:liveInvalidSections=@()
+    $secrets=@(foreach($entry in $script:credentialFields.Values){[pscustomobject]@{Entry=$entry;Mask=$entry.Mask.Password;Plain=$entry.Plain.Text}})
+    $script:globalSaving=$true
+    foreach($saved in $secrets){$saved.Entry.Syncing=$true}
+    try{
+        foreach($group in $script:globalSaveGroups.Values){
+            if($group.Key -in @('Actions','Voices')){continue}
+            if(-not $group.Dirty){$script:liveValidGroups.Remove($group.Key);continue}
+            $fingerprint=Get-GlobalSaveFingerprint $group
+            if($script:liveValidGroups.ContainsKey($group.Key) -and $script:liveValidGroups[$group.Key].Fingerprint -eq $fingerprint){continue}
+            $script:globalSaveDraft=$base|ConvertTo-Json -Depth 40|ConvertFrom-Json
+            $script:globalSaveStaging=$true;$script:globalStageWrites=0
+            try{
+                & $group.Save
+                if($script:globalStageWrites -eq 0){$script:liveInvalidSections+= $group.Key;continue}
+                $values=@{}
+                foreach($property in $script:globalSaveDraft.PSObject.Properties){
+                    $before=$base.PSObject.Properties[$property.Name]
+                    if($before -and [object]::Equals($before.Value,$property.Value)){continue}
+                    if(-not $before -or $null -eq $property.Value -or $property.Value -is [string] -or $property.Value -is [ValueType] -or (ConvertTo-Json $before.Value -Depth 35 -Compress) -cne (ConvertTo-Json $property.Value -Depth 35 -Compress)){$values[$property.Name]=$property.Value}
+                }
+                $script:liveValidGroups[$group.Key]=@{Fingerprint=$fingerprint;Values=$values}
+            }catch{$script:liveInvalidSections+= $group.Key}finally{$script:globalSaveStaging=$false;$script:globalSaveDraft=$null}
+        }
+        foreach($group in $script:globalSaveGroups.Values){if($script:liveValidGroups.ContainsKey($group.Key)){foreach($key in $script:liveValidGroups[$group.Key].Values.Keys){Set-JsonProperty $base $key $script:liveValidGroups[$group.Key].Values[$key]}}}
+        return $base
+    }finally{
+        foreach($saved in $secrets){$saved.Entry.Syncing=$true;$saved.Entry.Mask.Password=$saved.Mask;$saved.Entry.Plain.Text=$saved.Plain;$saved.Entry.Syncing=$false}
+        $script:globalSaveStaging=$false;$script:globalSaveDraft=$null;$script:globalSaving=$false;$BottomStatus.Text=$oldStatus
+    }
+}
+
+function script:Queue-LiveSettingsApply {
+    if(-not $script:liveSettingsInstalled -or $script:globalSaving -or $script:loadingSettings){return}
+    $script:liveSettingsReady=$false;$script:liveSettingsDebounce.Stop();$script:liveSettingsDebounce.Start()
+}
+
+function script:Invoke-AfterLiveSettings([scriptblock]$action){
+    $script:liveAfterApply=$action
+    Queue-LiveSettingsApply
+}
+
+function script:New-LiveSettingsClient {return [Net.WebClient]::new()}
+
+function script:Install-LiveSettings {
+    $script:liveValidGroups=@{};$script:liveFingerprints=@{};$script:liveSettingsPending=$null
+    $script:liveSettingsDebounce=[Windows.Threading.DispatcherTimer]::new();$script:liveSettingsDebounce.Interval=[TimeSpan]::FromMilliseconds(400)
+    $script:liveSettingsDebounce.Add_Tick({param($sender,$e)
+        $sender.Stop()
+        try{
+            $draft=Get-LiveSettingsDraft
+            $script:liveSettingsPending=(@{settings=$draft}|ConvertTo-Json -Depth 40 -Compress)
+            $script:liveSettingsPump.Start()
+        }catch{$BottomStatus.Text='Changes remain unsaved; live settings could not be prepared.'}
+    })
+    $script:liveSettingsPump=[Windows.Threading.DispatcherTimer]::new();$script:liveSettingsPump.Interval=[TimeSpan]::FromMilliseconds(100)
+    $script:liveSettingsPump.Add_Tick({param($sender,$e)
+        if($script:liveSettingsTask){
+            if(-not $script:liveSettingsTask.IsCompleted){return}
+            try{
+                $result=($script:liveSettingsTask.GetAwaiter().GetResult()|ConvertFrom-Json).result
+                $script:liveSettingsReady=$true
+                $BottomStatus.Text=if(@($result.restartRequired).Count){'Changes applied where supported. Save and restart for connection/recovery settings.'}elseif(@($result.saveRequired).Count){'Valid settings are active. Save to apply history retention and keep changes.'}else{'Valid settings are active. Save to keep them after restarting.'}
+                if($script:liveInvalidSections.Count){$BottomStatus.Text='Needs correction: '+($script:liveInvalidSections -join ', ')+'. Last valid values remain active.'}
+                elseif(-not @($script:globalSaveGroups.Values|Where-Object{$_.Dirty}).Count){$BottomStatus.Text='Saved settings are active.'}
+            }catch{$script:liveSettingsReady=$false;$script:liveAfterApply=$null;$BottomStatus.Text='Live settings were not applied. Check the app connection; your edits are still available.'}
+            finally{$script:liveSettingsClient.Dispose();$script:liveSettingsTask=$null}
+        }
+        if($script:liveSettingsPending){
+            $payload=$script:liveSettingsPending;$script:liveSettingsPending=$null
+            $script:liveSettingsClient=New-LiveSettingsClient;$script:liveSettingsClient.Proxy=$null;$script:liveSettingsClient.Encoding=[Text.Encoding]::UTF8;$script:liveSettingsClient.Headers['Content-Type']='application/json'
+            $script:liveSettingsTask=$script:liveSettingsClient.UploadStringTaskAsync([uri]((Get-BridgeBaseUri)+'/api/settings/runtime'),'POST',$payload)
+        }else{
+            $sender.Stop()
+            if($script:liveSettingsReady -and -not $script:liveSettingsDebounce.IsEnabled -and $script:liveAfterApply){$callback=$script:liveAfterApply;$script:liveAfterApply=$null;& $callback}
+        }
+    })
+    $menu=[Windows.Controls.ContextMenu]::new()
+    $discard=[Windows.Controls.MenuItem]::new();$discard.Header='Discard unsaved changes';$discard.Add_Click({Discard-PendingSettings});[void]$menu.Items.Add($discard);$script:globalSaveButton.ContextMenu=$menu
+    $HistoryLimitBox.ToolTip='Save to apply retention changes. Lowering this value can remove older history and audio.'
+    foreach($name in @('UdpBox','HttpBox','WsBox','EnableUdpCheck','PersistQueueCheck')){$control=$window.FindName($name);if($control){$control.ToolTip='Save and restart YapLoq to apply this connection/recovery setting.'}}
+    $script:liveSettingsInstalled=$true
+}
+
+function script:Discard-PendingSettings {
+    if(-not (Show-AppConfirmation $window 'Restore saved settings and discard the current unsaved edits?' 'Discard changes')){return}
+    $script:globalSaving=$true
+    try{
+        foreach($group in $script:globalSaveGroups.Values){foreach($grid in @($group.Inputs|Where-Object{$_ -is [Windows.Controls.DataGrid]})){[void]$grid.CancelEdit([Windows.Controls.DataGridEditingUnit]::Cell);[void]$grid.CancelEdit([Windows.Controls.DataGridEditingUnit]::Row)}}
+        $script:liveValidGroups=@{}
+        Refresh-Grid
+        $saved=Read-Settings
+        $script:assignmentDefaultPicker.SelectedItem=$null;Update-AssignmentDefaultChoices
+        $script:chatVoiceTagsAllEnabled.IsChecked=($saved.chat_voice_tags_all_enabled -ne $false)
+        $script:splitSpeechSentences.IsChecked=($saved.split_speech_sentences -eq $true)
+        $script:viewerCommandsEnabled.IsChecked=($saved.viewer_commands_enabled -eq $true)
+        $script:automationRules=@($saved.automations);Refresh-AutomationList (@($script:automationRules)[0])
+        foreach($group in $script:globalSaveGroups.Values){Reset-GlobalSaveGroup $group.Key}
+    }finally{$script:globalSaving=$false}
+    $script:liveSettingsDebounce.Stop();$script:liveSettingsPending='{"reset":true}';$script:liveSettingsPump.Start()
+    $BottomStatus.Text='Unsaved edits discarded. Restoring saved active settings.'
+}
+
+function script:Show-UnsavedChangesPrompt($owner,[string]$context){
+    $prompt=[Windows.Window]::new();$prompt.Owner=$owner;$prompt.Title='Unsaved changes'
+    $prompt.Width=460;$prompt.SizeToContent='Height';$prompt.ResizeMode='NoResize';$prompt.WindowStartupLocation='CenterOwner'
+    $prompt.Background=$window.Background;$prompt.Foreground=$window.Foreground
+    $prompt.Resources.MergedDictionaries.Add($window.Resources)
+    $prompt.FontFamily=$window.FontFamily
+    $panel=[Windows.Controls.StackPanel]::new();$panel.Margin=24;$prompt.Content=$panel
+    $heading=[Windows.Controls.TextBlock]::new();$heading.Text='Save your changes?';$heading.FontSize=20;$heading.FontWeight='SemiBold';[void]$panel.Children.Add($heading)
+    $message=[Windows.Controls.TextBlock]::new();$message.Text=$context;$message.TextWrapping='Wrap';$message.Margin='0,12,0,20';[void]$panel.Children.Add($message)
+    $buttons=[Windows.Controls.StackPanel]::new();$buttons.Orientation='Horizontal';$buttons.HorizontalAlignment='Right';[void]$panel.Children.Add($buttons)
+    $prompt.Resources['Choice']='Cancel'
+    foreach($choice in @('Cancel','Discard','Save')){
+        $button=[Windows.Controls.Button]::new();$button.Content=$choice;$button.Tag=$choice;$button.Margin='6,0,0,0'
+        if($choice -eq 'Save'){$button.Style=$window.FindResource('PrimaryButton');$button.IsDefault=$true}
+        if($choice -eq 'Cancel'){$button.IsCancel=$true}
+        $button.Add_Click({param($sender,$e)$hostWindow=[Windows.Window]::GetWindow($sender);$hostWindow.Resources['Choice']=[string]$sender.Tag;$hostWindow.Close()})
+        [void]$buttons.Children.Add($button)
+    }
+    Apply-AppFont $prompt
+    [void]$prompt.ShowDialog()
+    return [string]$prompt.Resources['Choice']
+}
+
+function script:Confirm-GlobalSaveExit {
+    if($script:globalSaving){return $false}
+    foreach($group in $script:globalSaveGroups.Values){
+        foreach($grid in @($group.Inputs|Where-Object{$_ -is [Windows.Controls.DataGrid]})){
+            if(-not $grid.CommitEdit([Windows.Controls.DataGridEditingUnit]::Cell,$true) -or -not $grid.CommitEdit([Windows.Controls.DataGridEditingUnit]::Row,$true)){
+                $BottomStatus.Text='Finish the highlighted table edit before exiting.';return $false
+            }
+        }
+        Update-GlobalSaveGroup $group.Key
+    }
+    $dirty=@($script:globalSaveGroups.Values|Where-Object{$_.Dirty})
+    if(-not $dirty.Count){return $true}
+    $choice=Show-UnsavedChangesPrompt $window ('Unsaved changes in '+(($dirty|ForEach-Object{$_.Key}) -join ', ')+'.')
+    if($choice -eq 'Discard'){
+        if($script:liveSettingsInstalled){try{[void](Invoke-BridgePost '/api/settings/runtime' @{reset=$true})}catch{$BottomStatus.Text='Could not restore saved active settings. Check the connection before exiting.';return $false}}
+        return $true
+    }
+    if($choice -ne 'Save'){return $false}
+    Save-AllPendingChanges
+    return -not @($script:globalSaveGroups.Values|Where-Object{$_.Dirty}).Count
+}
+
+function script:Get-EditorDraftFingerprint($dialog){
+    $values=[Collections.Generic.List[string]]::new()
+    $nodes=[Collections.Generic.Queue[object]]::new();$nodes.Enqueue($dialog)
+    while($nodes.Count){
+        $node=$nodes.Dequeue()
+        if($node -is [Windows.FrameworkElement] -and $node.Resources['EditorDraftValue']){$values.Add('Appearance='+[string]$node.Tag)}
+        if($node -is [Windows.FrameworkElement] -and $node.Name -and $node.Name -notmatch 'Search'){
+            $value=$null
+            if($node -is [Windows.Controls.TextBox] -and -not $node.IsReadOnly){$value=$node.Text}
+            elseif($node -is [Windows.Controls.PasswordBox]){$value=$node.Password}
+            elseif($node -is [Windows.Controls.ComboBox]){$value=if($node.IsEditable){$node.Text}else{[string]$node.SelectedIndex}}
+            elseif($node -is [Windows.Controls.Primitives.RangeBase]){$value=[string]$node.Value}
+            elseif($node -is [Windows.Controls.Primitives.ToggleButton]){$value=[string]$node.IsChecked}
+            elseif($node -is [Windows.Controls.ListBox]){$value=[string]$node.SelectedIndex}
+            if($null -ne $value){$values.Add($node.Name+'='+$value)}
+        }
+        # Playlist member checkboxes are created without names.
+        if($node -is [Windows.Controls.CheckBox] -and -not $node.Name){$values.Add([string]$node.Content+'='+$node.IsChecked)}
+        if($node -is [Windows.DependencyObject]){foreach($child in [Windows.LogicalTreeHelper]::GetChildren($node)){if($child -is [Windows.DependencyObject]){$nodes.Enqueue($child)}}}
+    }
+    $hash=[Security.Cryptography.SHA256]::Create()
+    try{return [Convert]::ToBase64String($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes(($values|ConvertTo-Json -Compress))))}finally{$hash.Dispose()}
+}
+
+function script:Install-EditorCloseGuard($dialog){
+    if($dialog.Resources['DraftGuardInstalled']){return}
+    $save=$dialog.FindName('Save');if(-not $save){$save=$dialog.FindName('StepSave')}
+    if(-not $save){return}
+    $dialog.Resources['DraftGuardInstalled']=$true;$dialog.Resources['DraftSaveButton']=$save
+    $dialog.Add_Loaded({param($sender,$e)$sender.Resources['DraftBaseline']=Get-EditorDraftFingerprint $sender})
+    $dialog.Add_Closing({param($sender,$e)
+        if($sender.DialogResult -eq $true -or $sender.Resources['DraftGuardSaving'] -or -not $sender.Resources['DraftBaseline']){return}
+        if((Get-EditorDraftFingerprint $sender) -eq $sender.Resources['DraftBaseline']){return}
+        $choice=Show-UnsavedChangesPrompt $sender 'This editor has unsaved changes.'
+        if($choice -eq 'Discard'){return}
+        $e.Cancel=$true
+        if($choice -eq 'Save'){
+            # Defer the existing Save handler until this Closing event has unwound.
+            [void]$sender.Dispatcher.BeginInvoke([action]{
+                $sender.Resources['DraftGuardSaving']=$true
+                try{$sender.Resources['DraftSaveButton'].RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))}
+                finally{$sender.Resources['DraftGuardSaving']=$false}
+            }.GetNewClosure())
+        }
+    })
+}
+
 function script:Get-GlobalPendingSnapshots {
     if(-not $script:globalSaveInstalled -or $script:globalSaving){return @()}
     foreach($group in $script:globalSaveGroups.Values){
@@ -51,7 +249,11 @@ function script:Get-GlobalSaveInputs([string[]]$functions){
 
 function script:Get-GlobalSaveFingerprint($group){
     $values=@(foreach($control in $group.Inputs){
-        if($control -is [Windows.Controls.PasswordBox]){[string]$control.Password}
+        $credential=$control.Resources['YapLoqCredential']
+        # Mask/Plain are two views of one value. Revealing or clearing the
+        # temporary plaintext display must never mark credentials as edited.
+        if($credential){[string]$credential.Mask.Password}
+        elseif($control -is [Windows.Controls.PasswordBox]){[string]$control.Password}
         elseif($control -is [Windows.Controls.TextBox]){[string]$control.Text}
         elseif($control -is [Windows.Controls.Primitives.ToggleButton]){[string]$control.IsChecked}
         elseif($control -is [Windows.Controls.Primitives.RangeBase]){[string]$control.Value}
@@ -88,13 +290,14 @@ function script:Update-GlobalSaveButton {
             $script:globalSaveButton.Effect=$null
         }
     }
-    $script:globalSaveButton.ToolTip=if($dirty.Count){'Save changes: '+(($dirty|ForEach-Object{$_.Key}) -join ', ')}else{'All changes saved (Ctrl+S)'}
+    $script:globalSaveButton.ToolTip=if($dirty.Count){'Save changes: '+(($dirty|ForEach-Object{$_.Key}) -join ', ')+$(if($script:liveSettingsInstalled){'. Valid settings apply live. Right-click to discard unsaved edits.'}else{''})}else{'All changes saved (Ctrl+S)'}
 }
 
 function script:Update-GlobalSaveGroup([string]$key){
     if(-not $script:globalSaveInstalled -or $script:globalSaving -or $script:loadingSettings){return}
     $group=$script:globalSaveGroups[$key];if(-not $group){return}
     $group.Dirty=(Get-GlobalSaveFingerprint $group) -ne $group.Baseline
+    if($script:liveSettingsInstalled){$fingerprint=Get-GlobalSaveFingerprint $group;if($script:liveFingerprints[$key] -ne $fingerprint){$script:liveFingerprints[$key]=$fingerprint;Queue-LiveSettingsApply}}
     Update-GlobalSaveButton
 }
 
@@ -107,6 +310,7 @@ function script:Reset-GlobalSaveGroup([string]$key){
 
 function script:Queue-GlobalSaveTracking($sender){
     if($script:globalSaving -or $script:loadingSettings){return}
+    $credential=$sender.Resources['YapLoqCredential'];if($credential -and $credential.Syncing){return}
     $keys=@($sender.Resources['GlobalSaveGroups'])
     foreach($key in $keys){
         $group=$script:globalSaveGroups[$key]
@@ -155,6 +359,7 @@ function script:Save-AllPendingChanges {
     # Save routines may clear a password field; preserve its draft until commit succeeds.
     $secrets=@(foreach($entry in $script:credentialFields.Values){[pscustomobject]@{Entry=$entry;Mask=$entry.Mask.Password;Plain=$entry.Plain.Text}})
     $script:globalSaving=$true
+    foreach($saved in $secrets){$saved.Entry.Syncing=$true}
     $section='Settings'
     try{
         $script:globalSaveDraft=Read-Settings;$script:globalSaveStaging=$true
@@ -171,6 +376,7 @@ function script:Save-AllPendingChanges {
         if(@($pending|Where-Object Key -eq 'Actions').Count){[void](Invoke-BridgePost '/api/maintenance/backup' @{})}
         $script:globalSaveStaging=$false
         Write-Settings $draft
+        if($script:liveSettingsInstalled){$script:liveValidGroups=@{};$script:liveSettingsDebounce.Stop();$script:liveSettingsPending='{"reset":true}';$script:liveSettingsPump.Start()}
         try{Sync-YapLoqCredentialFields}catch{}
         foreach($group in $script:globalSaveGroups.Values){Reset-GlobalSaveGroup $group.Key}
         if(@($pending|Where-Object Key -eq 'Actions').Count){Update-AutomationLegacyUi $true}
@@ -179,6 +385,7 @@ function script:Save-AllPendingChanges {
         foreach($saved in $secrets){$saved.Entry.Syncing=$true;$saved.Entry.Mask.Password=$saved.Mask;$saved.Entry.Plain.Text=$saved.Plain;$saved.Entry.Syncing=$false}
         $BottomStatus.Text='Not saved - '+$section+': '+$_.Exception.Message
     }finally{
+        foreach($saved in $secrets){$saved.Entry.Syncing=$false}
         $script:globalSaveStaging=$false;$script:globalSaveDraft=$null;$script:globalSaving=$false
         foreach($group in $script:globalSaveGroups.Values){Update-GlobalSaveGroup $group.Key}
         Update-GlobalSaveButton
@@ -204,7 +411,7 @@ function script:Install-GlobalSave {
         if($spec[2]){$button=$window.FindName($spec[2]);if($button){$button.Visibility='Collapsed'}}
     }
     Add-GlobalSaveGroup 'Default voice' @($script:assignmentDefaultPicker) {Save-AssignmentDefault}
-    Add-GlobalSaveGroup 'Viewer commands' @($script:viewerCommandsEnabled) {Save-ViewerCommands}
+    Add-GlobalSaveGroup 'Speech input' @($script:viewerCommandsEnabled,$script:chatVoiceTagsAllEnabled,$script:splitSpeechSentences) {Save-ViewerCommands}
     $actionInputs=@('AutomationName','AutomationEnabled','AutomationOnError','AutomationConditions','AutomationSteps'|ForEach-Object{Get-AutomationControl $_})
     Add-GlobalSaveGroup 'Actions' $actionInputs {
         if(-not(Save-AutomationDraft)){throw 'Finish editing the action first.'}

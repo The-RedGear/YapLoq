@@ -62,8 +62,8 @@ function Invoke-YapLoqUpdatePrimary{
             if($script:updateWhenIdle){$script:updateWhenIdle=$false;Update-YapLoqUpdateWindow;return}
             $state=$script:lastPlaybackState
             if($state.current -or $state.queueLength){
-                $answer=[Windows.MessageBox]::Show($script:updateDialog,'Speech is active. Schedule the update for when the current speech and waiting queue have finished? You can cancel it at any time.','Update after speech finishes','YesNo','Question')
-                if($answer -eq 'Yes'){$script:updateWhenIdle=$true;Update-YapLoqUpdateWindow}
+                $answer=Show-AppConfirmation $script:updateDialog 'Speech is active. Schedule the update for when the current speech and waiting queue have finished? You can cancel it at any time.' 'Update after speech finishes'
+                if($answer){$script:updateWhenIdle=$true;Update-YapLoqUpdateWindow}
             }else{Start-YapLoqUpdateRequest 'apply'}
         }
         default{Start-YapLoqUpdateRequest 'check'}

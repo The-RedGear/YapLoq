@@ -1,6 +1,20 @@
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'test_yaploq_shell.ps1')
 foreach($group in $script:globalSaveGroups.Values){Reset-GlobalSaveGroup $group.Key}
+foreach($credential in $script:credentialFields.Values){
+    $original=$credential.Mask.Password
+    $credential.Syncing=$true;$credential.Mask.Password='visibility-fixture';$credential.Syncing=$false;Hide-YapLoqCredential $credential
+    foreach($group in $script:globalSaveGroups.Values){Reset-GlobalSaveGroup $group.Key}
+    foreach($cycle in 1..3){
+        $credential.Toggle.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
+        foreach($group in $script:globalSaveGroups.Values){Update-GlobalSaveGroup $group.Key}
+        if(@($script:globalSaveGroups.Values|Where-Object{$_.Dirty}).Count){throw 'Showing or hiding a credential marked settings dirty'}
+        if($credential.Mask.Password -ne 'visibility-fixture'){throw 'Visibility toggle changed the credential value'}
+    }
+    Hide-YapLoqCredential $credential
+    $credential.Syncing=$true;$credential.Mask.Password=$original;$credential.Syncing=$false
+}
+foreach($group in $script:globalSaveGroups.Values){Reset-GlobalSaveGroup $group.Key}
 if($script:globalSaveGroups.Settings.Inputs.Count -lt 15){throw 'Settings tracking missed its editable controls'}
 if($script:globalSaveGroups.ElevenLabs.Inputs.Count -lt 2){throw 'Credential tracking missed its masked/plain inputs'}
 if($script:globalSaveGroups.Rules.Inputs.Count -lt 10 -or $script:globalSaveGroups.Actions.Inputs.Count -lt 5){throw 'Rule/action tracking missed editable controls'}

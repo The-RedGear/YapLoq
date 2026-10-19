@@ -16,6 +16,10 @@ These are settled constraints, not unfinished tasks:
 - Voice icons may come from any supported Icônes collection, rather than only MDI.
 - Alias color applies to voice-list selection, player artwork/background and Dashboard composer controls. The voice editor's Save button and provider-profile selection retain app purple. Recent-speech replay buttons retain app purple.
 - Saved-alias selection controls use the alias icon and its own highlight color consistently; default, playlist and random selectors retain standard app styling.
+- Assignments lists only viewers with an explicit saved voice/playlist. Ordinary default-voice speech does not create assignment records; Reset hides that viewer from this list.
+- Chat [Voice] tags may use every enabled alias by default. The Viewer commands section can restrict tags to public voices; !voice command permissions remain separate.
+- Assignments now has Viewers and Roles & rules, an inline fallback selector, and explicit Edit/Delete controls. Role flags and supplied custom-group arrays choose defaults; legacy name rules are preserved but hidden. Speech input/template preferences live in Settings rather than a Viewer commands tab.
+- Optional sentence-per-clip generation is in Settings, off by default, with a 50-clip atomic-admission bound and SSML exclusion. Verify real provider latency, prosody and cost before recommending it for a stream.
 - Update controls use the app's purple styling. Only the main title-bar download icon turns green when an update exists.
 - Use one normal installed executable location when applying updates.
 
@@ -30,7 +34,7 @@ These are settled constraints, not unfinished tasks:
 - [ ] Bulk voice management: select several aliases and apply supported shared actions without losing per-voice settings.
 - [ ] Provider-aware editor controls: show only capabilities supported by the selected provider; cover supported pitch/style options rather than presenting ineffective controls. Partial: provider/model/speed/volume controls already exist.
 - [ ] Contextual Configure service shortcut from the alias editor, returning to the same edit context.
-- [ ] Protect unsaved edits when closing an editor or switching context.
+- [x] Protect changed alias/playlist/pronunciation/profanity/sub-action editor drafts on Cancel, X and Escape; page drafts remain intact across navigation.
 - [ ] Undo for practical reversible operations such as removing an alias.
 - [ ] Independent preview playback that does not interrupt or join live speech. Partial: a separate preview output exists; a separate concurrent playback path still needs verification/completion.
 
@@ -116,7 +120,8 @@ Partial: audio settings, tray behavior, backups, diagnostics, updates and the ma
 - [ ] Remember window/editor sizes and positions.
 - [ ] Preserve subsection, filter, selection and appropriate scroll state.
 - [x] Global title-bar Save/Ctrl+S tracks page drafts, preserves them across navigation/refresh, validates before committing and retains failed edits. Local editor/record confirmations remain explicit.
-- [ ] Warn before exiting with unsaved page drafts and verify all editor cancellation paths.
+- [x] Valid settings activate as session-only backend overrides without saving; Save persists, and right-click Save > Discard restores saved values. Invalid edits retain the last valid active values. Connection/recovery settings require restart; destructive history retention and record/action edits keep explicit Save.
+- [x] Save/Discard/Cancel before exiting with unsaved page drafts; failed validation prevents exit. Covered local editor cancellation paths retain drafts unless explicitly discarded.
 - [ ] Inline editing and small popovers for simple frequent tasks where useful.
 - [ ] Verify keyboard focus, accessible labels, screen-reader behavior and physical high-DPI/mixed-monitor layouts.
 - [ ] Verify remaining controls have consistent icons, tooltips and discoverable alternatives to right-click menus.
@@ -181,7 +186,7 @@ The update window, GitHub release checks, startup checks, repeatable manual chec
 
 This orders the remaining list; it does not replace its requirements.
 
-1. Protect unsaved page/editor drafts on exit or context changes, following the completed global Save workflow.
+1. Unsaved page/editor draft protection is implemented; verify shutdown and tray behavior on real hardware alongside the recovery checks.
 2. Reference-safe alias rename/delete: warn about affected playlists, assignments, rules and exported actions; repair internal references.
 3. Finish external Streamer.Bot/high-volume and multi-voice validation, including skip/clear/manual moves during generate-ahead playback. Core assignments, public voice commands and multi-voice splitting are implemented.
 4. Explain voice selection in message details and retain pre-admission rejection feedback. Queue search/details and waiting-message voice changes are implemented.

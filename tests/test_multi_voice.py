@@ -72,6 +72,7 @@ def test_one_input_consumes_cooldown_once_and_failed_input_does_not(engine):
 
 
 def test_viewer_tags_use_public_names_and_permissions(engine):
+    engine.settings.chat_voice_tags_all_enabled = False
     protocol = SpeakerBotProtocol(engine.settings, engine)
     data = dict(platform='twitch', userId='123', message='[Public Other] Hello [EventVoice] Hi')
     protocol.execute('Speak', data)
@@ -84,6 +85,7 @@ def test_viewer_tags_use_public_names_and_permissions(engine):
 
 
 def test_legacy_streamerbot_owner_action_can_tag_private_aliases(engine):
+    engine.settings.chat_voice_tags_all_enabled = False
     engine.settings.aliases['Other'].public = False
     engine.settings.aliases['EventVoice'].public = False
     protocol = SpeakerBotProtocol(engine.settings, engine)
@@ -92,6 +94,52 @@ def test_legacy_streamerbot_owner_action_can_tag_private_aliases(engine):
     assert queued(engine) == [('first', 'Other'), ('second', 'EventVoice')]
     with pytest.raises(ValueError, match='unavailable'):
         protocol.execute('Speak', dict(platform='twitch', userId='123', message='[Other] not allowed'))
+
+
+def test_identified_chat_can_split_private_enabled_voices_without_creating_assignment(engine):
+    engine.settings.aliases['Other'].public = False
+    engine.settings.aliases['EventVoice'].public = False
+    speak(engine, '[Other] first [EventVoice] second', platform='twitch', userId='123')
+    assert queued(engine) == [('first', 'Other'), ('second', 'EventVoice')]
+    assert SpeakerBotProtocol(engine.settings, engine).execute('GetViewers', {})['viewers'] == []
+    engine.settings.aliases['Other'].enabled = False
+    with pytest.raises(ValueError, match='unavailable'):
+        speak(engine, '[Other] first [EventVoice] second', platform='twitch', userId='123')
+    assert len(queued(engine)) == 2
+
+
+def test_chat_tag_access_setting_survives_save_reload(engine):
+    engine.settings.chat_voice_tags_all_enabled = False
+    engine.settings.save()
+    assert Settings(engine.settings.path).chat_voice_tags_all_enabled is False
+    engine.settings.chat_voice_tags_all_enabled = True
+    engine.settings.save()
+    assert Settings(engine.settings.path).chat_voice_tags_all_enabled is True
+
+
+def test_private_chat_tags_ignore_case_and_punctuation_with_unique_word_prefixes(engine):
+    engine.settings.aliases['Sgt. Johnson'] = VoiceAlias('Sgt. Johnson')
+    engine.settings.aliases['Spongebob Squarepants'] = VoiceAlias('Spongebob Squarepants')
+    speak(engine, '[sgt johnson] One [SPONGEBOB] Two', platform='twitch', userId='123')
+    assert queued(engine) == [('One', 'Sgt. Johnson'), ('Two', 'Spongebob Squarepants')]
+
+
+def test_optional_sentence_clips_preserve_voices_order_and_abbreviations(engine):
+    text = '[Other] Dr. Smith is here. Hello! [EventVoice] Last sentence.'
+    speak(engine, text)
+    assert len(queued(engine)) == 2
+    engine.settings.split_speech_sentences = True
+    speak(engine, text)
+    assert queued(engine)[2:] == [('Dr. Smith is here.', 'Other'), ('Hello!', 'Other'), ('Last sentence.', 'EventVoice')]
+    engine.settings.save()
+    assert Settings(engine.settings.path).split_speech_sentences is True
+
+
+def test_sentence_clip_limit_rejects_whole_input(engine):
+    engine.settings.split_speech_sentences = True
+    with pytest.raises(ValueError, match='50 clips'):
+        speak(engine, 'Hello. ' * 51)
+    assert queued(engine) == []
 
 
 def test_short_unique_alias_and_segment_sort_metadata(engine):
@@ -106,7 +154,11 @@ def test_short_unique_alias_and_segment_sort_metadata(engine):
         speak(engine, '[Spongebob] ambiguous')
 
 
-def test_real_udp_packet_splits_into_separate_queue_voices(engine):
+@pytest.mark.parametrize('packet', [
+    b'YAPLOQ\nrandom\n[Other] first [Spongebob] second\nOwner\nowner',
+    b'YAPLOQ2\n\ntwitch\n123\nViewer\nviewer\nFalse\nFalse\nFalse\n[Other] first [Spongebob] second',
+])
+def test_real_udp_packet_splits_into_separate_queue_voices(engine, packet):
     import socket
     import threading
     from time import monotonic, sleep
@@ -121,7 +173,7 @@ def test_real_udp_packet_splits_into_separate_queue_voices(engine):
         while server.udp_server is None and monotonic() < deadline:
             sleep(0.01)
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
-            client.sendto(b'YAPLOQ\nrandom\n[Other] first [Spongebob] second\nOwner\nowner',
+            client.sendto(packet,
                           ('127.0.0.1', server.udp_server.server_address[1]))
         deadline = monotonic() + 2
         while len(queued(engine)) < 2 and monotonic() < deadline:

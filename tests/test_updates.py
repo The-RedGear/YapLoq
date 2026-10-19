@@ -100,6 +100,9 @@ def test_download_hash_failure_never_becomes_ready(tmp_path):
 
 def test_download_persists_verified_package_for_restart(tmp_path,monkeypatch):
     monkeypatch.delenv('YAPLOQ_PREVIEW',raising=False)
+    # This scenario upgrades a fixed older installation, regardless of the
+    # current source version. Equal-version cached updates are rightly ignored.
+    monkeypatch.setattr('voice_studio_speaker_bridge.updates.installed_version', lambda: '0.5.0')
     package=make_package(tmp_path/'fixture.zip');payload=package.read_bytes()
     manager=UpdateManager(Settings(tmp_path/'data'/'settings.json'))
     asset=release()['assets'][0];asset.update(size=len(payload),digest='sha256:'+hashlib.sha256(payload).hexdigest())

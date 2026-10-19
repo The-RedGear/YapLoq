@@ -10,8 +10,8 @@ jobs:
   test:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install dependencies
@@ -36,3 +36,9 @@ jobs:
       - name: Verify global Save and pending drafts
         shell: powershell
         run: powershell.exe -STA -NoProfile -ExecutionPolicy Bypass -File tests/test_global_save_ui.ps1
+      - name: Verify unsaved-change protection
+        shell: powershell
+        run: powershell.exe -STA -NoProfile -ExecutionPolicy Bypass -File tests/test_unsaved_changes_ui.ps1
+      - name: Verify live settings and Discard
+        shell: powershell
+        run: powershell.exe -STA -NoProfile -ExecutionPolicy Bypass -File tests/test_live_settings_ui.ps1

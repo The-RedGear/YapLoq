@@ -1,6 +1,8 @@
 function Get-ViewerControl([string]$name){$script:viewerPage.FindName($name)}
 
 function Show-AssignmentSection([string]$section){
+    if($section -eq 'Default voice'){$section='Rules'}
+    if($section -eq 'Viewer commands'){Set-Page 'settings';return}
     if(-not $script:assignmentSections){return}
     foreach($key in $script:assignmentSections.Keys){
         $script:assignmentSections[$key].Visibility=if($key -eq $section){'Visible'}else{'Collapsed'}
@@ -15,7 +17,7 @@ function Save-AssignmentRules {
         $settings=Read-Settings;$users=[ordered]@{};$roles=[ordered]@{}
         foreach($entry in @($VoiceRulesGrid.ItemsSource)){
             if(-not $entry -or -not ([string]$entry.value).Trim() -or -not ([string]$entry.alias).Trim()){continue}
-            if($entry.field -eq 'role'){$roles[$entry.value]=$entry.alias}else{$users[$entry.value]=$entry.alias}
+            if($entry.field -eq 'group'){$roles['group:'+([string]$entry.value).ToLowerInvariant()]=$entry.alias}elseif($entry.field -eq 'role'){$roles[$entry.value]=$entry.alias}else{$users[$entry.value]=$entry.alias}
         }
         Set-JsonProperty $settings 'user_voice_rules' ([pscustomobject]$users)
         Set-JsonProperty $settings 'role_voice_rules' ([pscustomobject]$roles)
@@ -38,6 +40,8 @@ function Save-ViewerCommands {
     try{
         $settings=Read-Settings
         Set-JsonProperty $settings 'viewer_commands_enabled' ([bool]$script:viewerCommandsEnabled.IsChecked)
+        Set-JsonProperty $settings 'chat_voice_tags_all_enabled' ([bool]$script:chatVoiceTagsAllEnabled.IsChecked)
+        Set-JsonProperty $settings 'split_speech_sentences' ([bool]$script:splitSpeechSentences.IsChecked)
         Write-Settings $settings
         $script:viewerCommandsStatus.Text='Viewer command setting saved.'
     }catch{$script:viewerCommandsStatus.Text=$_.Exception.Message}
@@ -50,7 +54,7 @@ function Copy-ViewerCommandAction {
         $platform=[string]$script:viewerTemplatePlatform.SelectedValue
         $result=Invoke-BridgePost '/api/maintenance/viewer-command-export' @{platform=$platform}
         [Windows.Clipboard]::SetText((Get-Content -LiteralPath ([string]$result.result.path) -Raw -Encoding UTF8))
-        $script:viewerCommandsStatus.Text='Templates copied. Import in Streamer.Bot. Attach your Starts With !voice command to Viewer voice command, and a separate speech command (such as !say) to Speak using viewer assignment. Configure success/failure replies in YapLoq Actions.'
+        $script:viewerCommandsStatus.Text='Templates copied. Import in Streamer.Bot. For chat, use Chat using viewer assignment. For !say commands, use Speak using viewer assignment. Do not trigger both for the same message. Replace the old Random Alias chat action. Viewer records require the real platform user ID.'
     }catch{$script:viewerCommandsStatus.Text=$_.Exception.Message}
 }
 
@@ -80,6 +84,9 @@ function Set-ViewerSearch {
 }
 
 function Show-ViewerDraft($entry){
+    $script:viewerOriginalIdentity=$null
+    (Get-ViewerControl 'ViewerEdit').IsEnabled=[bool]$entry
+    (Get-ViewerControl 'ViewerDelete').IsEnabled=[bool]$entry
     foreach($spec in @(@('ViewerId','userId'),@('ViewerName','displayName'))){(Get-ViewerControl $spec[0]).Text=if($entry){[string]$entry.($spec[1])}else{''}}
     $platform=Get-ViewerControl 'ViewerPlatform'
     if($entry -and $entry.platform -notin @($platform.Items|ForEach-Object{$_.Tag})){
@@ -90,23 +97,40 @@ function Show-ViewerDraft($entry){
     (Get-ViewerControl 'ViewerId').IsReadOnly=[bool]$entry
     (Get-ViewerControl 'ViewerReset').IsEnabled=[bool]$entry
     (Get-ViewerControl 'ViewerVoice').SelectedValue=if($entry){[string]$entry.voice}else{''}
-    if($entry){(Get-ViewerControl 'ViewerStatus').Text=if($entry.warning){$entry.warning+' — choose another voice or reset.'}else{$entry.assignmentOrigin}}
+    if($entry){(Get-ViewerControl 'ViewerStatus').Text=if($entry.platform -eq 'twitch' -and $entry.userId -notmatch '^\d+$'){'This Twitch user ID looks like a username. Click Edit viewer to enter the numeric ID, or assign from a received message.'}elseif($entry.warning){$entry.warning+' — choose another voice or reset.'}else{'Choose a voice below, then Apply assignment. Edit viewer also lets you correct the platform/user ID.'}}
+}
+
+function Edit-ViewerDraft {
+    $entry=(Get-ViewerControl 'ViewerList').SelectedItem;if(-not $entry){return}
+    $script:viewerOriginalIdentity=@{platform=[string]$entry.platform;userId=[string]$entry.userId}
+    (Get-ViewerControl 'ViewerPlatform').IsEnabled=$true
+    (Get-ViewerControl 'ViewerId').IsReadOnly=$false
+    (Get-ViewerControl 'ViewerStatus').Text='Edit this viewer below, then Apply assignment. Twitch requires the numeric user ID, not the username. Existing identities cannot be overwritten.'
+    (Get-ViewerControl 'ViewerVoice').Focus()|Out-Null
+}
+
+function Delete-ViewerAssignment {
+    $entry=(Get-ViewerControl 'ViewerList').SelectedItem;if(-not $entry){return}
+    if(-not (Show-AppConfirmation $window ('Delete the special voice assignment for '+$entry.displayName+'? Future speech will use role/default rules. Speech history is kept.') 'Delete assignment')){return}
+    try{[void](Invoke-BridgePost '/api/viewers/delete' @{platform=[string]$entry.platform;userId=[string]$entry.userId});Start-ViewerLoad;(Get-ViewerControl 'ViewerStatus').Text='Assignment deleted. Speech history was kept.'}
+    catch{(Get-ViewerControl 'ViewerStatus').Text=$_.Exception.Message}
 }
 
 function Apply-ViewerList($result){
     $list=Get-ViewerControl 'ViewerList';$old=$list.SelectedItem
     $choices=@([pscustomobject]@{Label='Use rules / default';Value=''})
     foreach($voice in $result.voices){$choices+=[pscustomobject]@{Label=[string]$voice;Value=[string]$voice}}
-    foreach($entry in $result.viewers){
+    $assigned=@($result.viewers|Where-Object{([string]$_.voice).Trim()})
+    foreach($entry in $assigned){
         $entry|Add-Member NoteProperty voiceLabel $(if($entry.voice){$entry.voice}else{'Default'}) -Force
         $entry|Add-Member NoteProperty status $(if(-not $entry.available){'Unavailable'}elseif($entry.voice){'Assigned'}else{'Default'}) -Force
         if($entry.voice -and $entry.voice -notin $choices.Value){$choices+=[pscustomobject]@{Label=$entry.voice+' (unavailable)';Value=$entry.voice}}
     }
     (Get-ViewerControl 'ViewerVoice').ItemsSource=$choices
-    $list.ItemsSource=@($result.viewers);Set-ViewerSearch
-    $selected=@($result.viewers|Where-Object{$old -and $_.platform -eq $old.platform -and $_.userId -ceq $old.userId})[0]
+    $list.ItemsSource=$assigned;Set-ViewerSearch
+    $selected=@($assigned|Where-Object{$old -and $_.platform -eq $old.platform -and $_.userId -ceq $old.userId})[0]
     $list.SelectedItem=$selected;Show-ViewerDraft $selected
-    if(-not $selected){(Get-ViewerControl 'ViewerStatus').Text='Viewers with a platform and user ID appear here when they send speech. You can also add one manually.'}
+    if(-not $selected){(Get-ViewerControl 'ViewerStatus').Text='Only viewers with a special voice assignment appear here. Assign from a message in Queue/recent speech, or Add viewer using the real platform user ID. Reset removes an assignment from this list.'}
 }
 
 function Start-ViewerLoad {
@@ -125,7 +149,9 @@ function Save-ViewerAssignment([bool]$reset=$false){
     try{
         $platform=[string](Get-ViewerControl 'ViewerPlatform').SelectedValue
         if(-not $platform){throw 'Choose a platform from the dropdown.'}
+        if($platform -eq 'twitch' -and (Get-ViewerControl 'ViewerId').Text -notmatch '^\d+$'){throw 'Twitch requires the numeric user ID, not a username. Send a message with the assignment-aware Streamer.Bot template, then select its viewer record.'}
         $body=@{platform=$platform;userId=(Get-ViewerControl 'ViewerId').Text;displayName=(Get-ViewerControl 'ViewerName').Text;voice=$(if($reset){''}else{(Get-ViewerControl 'ViewerVoice').SelectedValue})}
+        if($script:viewerOriginalIdentity){$body.originalIdentity=$script:viewerOriginalIdentity}
         [void](Invoke-BridgePost '/api/viewers/set' $body)
         (Get-ViewerControl 'ViewerStatus').Text='Viewer assignment saved in the app data folder.'
         Start-ViewerLoad
@@ -146,6 +172,10 @@ function Install-YapLoqViewers {
     $save=[Windows.Controls.Button]::new();$save.Content='Save default';$save.Style=$window.FindResource('PrimaryButton');$save.HorizontalAlignment='Left';$save.Add_Click({Save-AssignmentDefault});[void]$defaults.Children.Add($save)
     $script:assignmentDefaultStatus=[Windows.Controls.TextBlock]::new();$script:assignmentDefaultStatus.Text='Used when no explicit voice, viewer preference or rule chooses a voice. Unavailable assignments fall back to the first enabled voice.';$script:assignmentDefaultStatus.TextWrapping='Wrap';$script:assignmentDefaultStatus.Margin='0,12,0,0';[void]$defaults.Children.Add($script:assignmentDefaultStatus)
     $commands=[Windows.Controls.StackPanel]::new();$commands.Margin='0,0,8,0'
+    $script:splitSpeechSentences=[Windows.Controls.CheckBox]::new();$script:splitSpeechSentences.Content='Generate sentences as separate audio clips';$script:splitSpeechSentences.IsChecked=((Read-Settings).split_speech_sentences -eq $true);$script:splitSpeechSentences.Margin='0,0,0,12';[void]$commands.Children.Add($script:splitSpeechSentences)
+    $sentenceHelp=[Windows.Controls.TextBlock]::new();$sentenceHelp.Text='Off by default. Plain-text sentences become separate queue entries, preserving voice and playback order. May add pauses and provider requests; SSML stays intact. At most 50 clips per input.';$sentenceHelp.TextWrapping='Wrap';$sentenceHelp.Margin='0,0,0,16';[void]$commands.Children.Add($sentenceHelp)
+    $script:chatVoiceTagsAllEnabled=[Windows.Controls.CheckBox]::new();$script:chatVoiceTagsAllEnabled.Content='Allow every enabled voice in chat [Voice] tags';$tagSettings=Read-Settings;$script:chatVoiceTagsAllEnabled.IsChecked=($tagSettings.chat_voice_tags_all_enabled -ne $false);$script:chatVoiceTagsAllEnabled.Margin='0,0,0,16';[void]$commands.Children.Add($script:chatVoiceTagsAllEnabled)
+    $tagHelp=[Windows.Controls.TextBlock]::new();$tagHelp.Text='When off, chat tags can use only public voices allowed for that viewer. This does not change !voice command permissions.';$tagHelp.TextWrapping='Wrap';$tagHelp.Margin='0,0,0,16';[void]$commands.Children.Add($tagHelp)
     $script:viewerCommandsEnabled=[Windows.Controls.CheckBox]::new();$script:viewerCommandsEnabled.Content='Allow viewer !voice commands';$script:viewerCommandsEnabled.IsChecked=((Read-Settings).viewer_commands_enabled -eq $true);$script:viewerCommandsEnabled.Margin='0,0,0,16';[void]$commands.Children.Add($script:viewerCommandsEnabled)
     $help=[Windows.Controls.TextBlock]::new();$help.Text='Viewers can use !voice to list public voices, !voice name to choose, !voice random, or !voice reset. Make voices public and choose their audience in the voice editor. Private voices remain available to your own actions.';$help.TextWrapping='Wrap';$help.Margin='0,0,0,16';[void]$commands.Children.Add($help)
     $commandButtons=[Windows.Controls.WrapPanel]::new();[void]$commands.Children.Add($commandButtons)
@@ -156,10 +186,35 @@ function Install-YapLoqViewers {
     $copyCommands=[Windows.Controls.Button]::new();$copyCommands.Content='Copy Streamer.Bot templates';$copyCommands.Margin='0,0,8,0';$copyCommands.Add_Click({Copy-ViewerCommandAction});[void]$commandButtons.Children.Add($copyCommands)
     $openActions=[Windows.Controls.Button]::new();$openActions.Content='Set up result actions';$openActions.Add_Click({Set-Page 'streamActions'});[void]$commandButtons.Children.Add($openActions)
     $script:viewerCommandsStatus=[Windows.Controls.TextBlock]::new();$script:viewerCommandsStatus.Text='Templates forward platform, user ID, name and audience flags from the event. Use Viewer voice set successfully, Viewer voice command failed, reset or list events in Streamer.Bot > Actions. Pass {ttsReply}, {ttsPlatform} and {ttsUserId} to your reply action. Import does not create triggers or send chat replies automatically.';$script:viewerCommandsStatus.TextWrapping='Wrap';$script:viewerCommandsStatus.Margin='0,16,0,0';[void]$commands.Children.Add($script:viewerCommandsStatus)
-    $script:assignmentSections=@{Viewers=$script:viewerPage;Rules=$rules;'Default voice'=$defaults;'Viewer commands'=$commands};$script:assignmentSectionButtons=@{}
-    foreach($name in @('Viewers','Rules','Default voice','Viewer commands')){
+    $script:assignmentSections=@{Viewers=$script:viewerPage;Rules=$rules};$script:assignmentSectionButtons=@{}
+    foreach($name in @('Viewers','Rules')){
         $body=$script:assignmentSections[$name];[Windows.Controls.Grid]::SetRow($body,1);[void]$page.Children.Add($body)
         $button=[Windows.Controls.Button]::new();$button.Content=$name;$button.Tag=$name;$button.Margin='0,0,8,0';$button.Add_Click({param($sender,$e)Show-AssignmentSection $sender.Tag});$script:assignmentSectionButtons[$name]=$button;[void]$header.Children.Add($button)
+    }
+    $defaultLabel=[Windows.Controls.TextBlock]::new();$defaultLabel.Text='Fallback voice';$defaultLabel.VerticalAlignment='Center';$defaultLabel.Margin='16,0,8,0';[void]$header.Children.Add($defaultLabel)
+    [void]$defaults.Children.Remove($script:assignmentDefaultPicker);$script:assignmentDefaultPicker.Width=240;$script:assignmentDefaultPicker.Margin='0,0,8,0';[void]$header.Children.Add($script:assignmentDefaultPicker)
+    $script:assignmentSectionButtons.Rules.Content='Roles & rules'
+    # Integration commands remain compatible, but no longer occupy an Assignments tab.
+    $commands.Children.Remove($script:viewerCommandsEnabled);$saveCommands.Visibility='Collapsed';$help.Visibility='Collapsed';$openActions.Visibility='Collapsed'
+    [void]$commands.Children.Remove($commandButtons);[void]$commands.Children.Remove($script:viewerCommandsStatus)
+    $commands.Margin='4,8,4,4';$sentenceHelp.FontSize=11;$sentenceHelp.Foreground=$window.FindResource('Muted');$tagHelp.FontSize=11;$tagHelp.Foreground=$window.FindResource('Muted')
+    $templates=[Windows.Controls.StackPanel]::new();$templates.Margin='4,8,4,4';[void]$templates.Children.Add($commandButtons);[void]$templates.Children.Add($script:viewerCommandsStatus)
+    $script:viewerCommandsStatus.Text='Choose the platform and copy the templates into Streamer.Bot. Use Chat using viewer assignment for chat messages, or Speak using viewer assignment for commands. Attach your own triggers; importing does not run actions.'
+    $script:viewerCommandsStatus.FontSize=11;$script:viewerCommandsStatus.Foreground=$window.FindResource('Muted')
+    foreach($spec in @(@('Speech input','mdi:message-text',$commands),@('Assignment templates','mdi:puzzle',$templates))){
+        $expander=[Windows.Controls.Expander]::new();$expander.Style=$window.FindResource('SettingsExpander');$expander.IsExpanded=$false;$expander.Content=$spec[2]
+        $sectionHeader=[Windows.Controls.StackPanel]::new();$sectionHeader.Orientation='Horizontal'
+        $sectionIcon=[Windows.Shapes.Path]::new();$sectionIcon.Data=(Resolve-VoiceIcon $spec[1]).Geometry;$sectionIcon.Fill=$window.FindResource('Accent');$sectionIcon.Width=16;$sectionIcon.Height=16;$sectionIcon.Stretch='Uniform';$sectionIcon.Margin='0,0,10,0'
+        $sectionLabel=[Windows.Controls.TextBlock]::new();$sectionLabel.Text=$spec[0];$sectionLabel.VerticalAlignment='Center';[void]$sectionHeader.Children.Add($sectionIcon);[void]$sectionHeader.Children.Add($sectionLabel);$expander.Header=$sectionHeader
+        $card=[Windows.Controls.Border]::new();$card.Background=[Windows.Media.BrushConverter]::new().ConvertFromString('#E61E1A27');$card.BorderBrush=$window.FindResource('Border');$card.BorderThickness=1;$card.CornerRadius=12;$card.Padding='16,12';$card.Margin='0,14,0,0';$card.HorizontalAlignment='Stretch';$card.Child=$expander
+        if($spec[0] -eq 'Speech input'){
+            $script:speechInputExpander=$expander;$script:speechInputCard=$card
+            $stack=$window.FindName('SettingsStack');$before=$window.FindName('WindowSettingsExpander').Parent
+            $stack.Children.Insert($stack.Children.IndexOf($before),$card)
+        }else{
+            $script:assignmentTemplatesExpander=$expander;$script:assignmentTemplatesCard=$card
+            [void]$StreamerBotPage.Content.Children.Add($card)
+        }
     }
     $script:assignmentRulesSave=[Windows.Controls.Button]::new();$script:assignmentRulesSave.Content='Save assignment rules';$script:assignmentRulesSave.Style=$window.FindResource('PrimaryButton');$script:assignmentRulesSave.Margin='12,0,0,0';$script:assignmentRulesSave.Add_Click({Save-AssignmentRules});[void]$header.Children.Add($script:assignmentRulesSave)
     foreach($grid in @($RoutingGrid,$VoiceRulesGrid)){
@@ -172,8 +227,15 @@ function Install-YapLoqViewers {
     $script:yaploqPages['assignments']=$page;$script:routeOwners['assignments']='Voices'
     $sections=@($script:ownerSections.Voices|Where-Object{$_[1] -ne 'routing'});$script:ownerSections.Voices=@($sections[0],@('Assignments','assignments','VoicesNav'))+@($sections|Select-Object -Skip 1)
     $routingLabel=$window.FindName('RoutingExpander').Header.Children[1];$routingLabel.Text='Conditional rules'
-    $window.FindName('RoutingExpander').IsExpanded=$true
-    $window.FindName('AutoVoiceRulesExpander').Header.Children[1].Text='Name and role defaults'
+    $window.FindName('RoutingExpander').IsExpanded=$false
+    $window.FindName('AutoVoiceRulesExpander').Header.Children[1].Text='Role and group defaults'
+    $roleExpander=$window.FindName('AutoVoiceRulesExpander');$roleExpander.IsExpanded=$true
+    $roleCard=$roleExpander.Parent;$roleHost=$roleCard.Parent
+    [void]$roleHost.Children.Remove($roleCard);$roleHost.Children.Insert(0,$roleCard)
+    $VoiceRuleFieldBox.Items.Clear()
+    foreach($spec in @(@('Role','role'),@('Custom group','group'))){$option=[Windows.Controls.ComboBoxItem]::new();$option.Content=$spec[0];$option.Tag=$spec[1];[void]$VoiceRuleFieldBox.Items.Add($option)}
+    $VoiceRuleFieldBox.SelectedIndex=0
+    if($null -ne $VoiceRulesGrid.ItemsSource){$roleView=[Windows.Data.CollectionViewSource]::GetDefaultView($VoiceRulesGrid.ItemsSource);if($roleView -and $roleView.CanFilter){$roleView.Filter=[Predicate[object]]{param($row)$row.field -ne 'user'}}}
     Update-AssignmentDefaultChoices
     Show-AssignmentSection 'Viewers'
     (Get-ViewerControl 'ViewerSave').Style=$window.FindResource('PrimaryButton')
@@ -187,8 +249,11 @@ function Install-YapLoqViewers {
     (Get-ViewerControl 'ViewerList').Add_SelectionChanged({Show-ViewerDraft (Get-ViewerControl 'ViewerList').SelectedItem})
     (Get-ViewerControl 'ViewerNew').Add_Click({(Get-ViewerControl 'ViewerList').SelectedItem=$null;Show-ViewerDraft $null;(Get-ViewerControl 'ViewerPlatform').Focus()|Out-Null})
     (Get-ViewerControl 'ViewerSave').Add_Click({Save-ViewerAssignment})
+    (Get-ViewerControl 'ViewerEdit').Add_Click({Edit-ViewerDraft})
+    (Get-ViewerControl 'ViewerDelete').Add_Click({Delete-ViewerAssignment})
+    (Get-ViewerControl 'ViewerList').Add_MouseDoubleClick({Edit-ViewerDraft})
     (Get-ViewerControl 'ViewerReset').Add_Click({Save-ViewerAssignment $true})
     $RefreshButton.Add_Click({if($script:activePage -eq 'assignments'){Start-ViewerLoad}})
-    Install-YapLoqItemMenu (Get-ViewerControl 'ViewerList') @(@('Add viewer',(Get-ViewerControl 'ViewerNew'),'global'),@('Reset assignment',(Get-ViewerControl 'ViewerReset')), @('Copy user ID','copy:userId'))
+    Install-YapLoqItemMenu (Get-ViewerControl 'ViewerList') @(@('Edit viewer',(Get-ViewerControl 'ViewerEdit')),@('Delete assignment',(Get-ViewerControl 'ViewerDelete')),@('Add viewer',(Get-ViewerControl 'ViewerNew'),'global'),@('Reset assignment',(Get-ViewerControl 'ViewerReset')), @('Copy user ID','copy:userId'))
     Show-ViewerDraft $null
 }

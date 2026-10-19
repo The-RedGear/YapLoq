@@ -128,6 +128,23 @@ try{
     }catch{
         try{Write-Outcome 'recovery-needed' ('Update failed: '+$failure+'. Recovery failed: '+$_.Exception.Message+'. Backup: '+$backup)}catch{}
     }
-    if(-not $NoDialog){[void][Windows.Forms.MessageBox]::Show(('The update could not be completed. '+$failure+"`nYour backup is in: "+$backup),'YapLoq update',0,48)}
+    if(-not $NoDialog){
+        Add-Type -AssemblyName PresentationFramework,PresentationCore,WindowsBase
+        $errorWindow=[Windows.Markup.XamlReader]::Parse(@'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="YapLoq update" Width="540" SizeToContent="Height" WindowStartupLocation="CenterScreen" WindowStyle="None" AllowsTransparency="True" Background="Transparent" Foreground="#EEEAF4" ResizeMode="NoResize">
+ <Border Background="#15131D" BorderBrush="#50485C" BorderThickness="1" CornerRadius="12"><Grid><Grid.RowDefinitions><RowDefinition Height="48"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+ <Border Name="TitleBar" Background="#1B1824" CornerRadius="12,12,0,0" BorderBrush="#50485C" BorderThickness="0,0,0,1"><DockPanel Margin="16,0,12,0"><Button Name="CloseX" DockPanel.Dock="Right" Content="&#x2715;" Foreground="#EEEAF4" Background="Transparent" BorderThickness="0" Width="30" Height="30" HorizontalAlignment="Right"/><StackPanel Orientation="Horizontal" VerticalAlignment="Center"><Image Name="Logo" Width="20" Height="20" Margin="0,0,9,0"/><TextBlock Text="YapLoq update" FontSize="14" FontWeight="SemiBold"/></StackPanel></DockPanel></Border>
+ <StackPanel Grid.Row="1" Margin="24"><TextBlock Text="Update could not be completed" FontSize="20" FontWeight="SemiBold"/><TextBlock Name="Message" TextWrapping="Wrap" Margin="0,14,0,20"/><Button Name="Close" Content="Close" HorizontalAlignment="Right" Padding="20,8" Background="#B6A3FF" Foreground="#15131D" BorderThickness="0"/></StackPanel>
+ </Grid></Border>
+</Window>
+'@)
+        $errorWindow.FindName('Message').Text='The update could not be completed. '+$failure+"`nYour backup is in: "+$backup
+        $brand=Join-Path $install '_internal\assets\YapLoq-logo.png'
+        if(Test-Path -LiteralPath $brand){$errorWindow.FindName('Logo').Source=[Windows.Media.Imaging.BitmapImage]::new([Uri]::new($brand))}
+        $errorWindow.FindName('TitleBar').Add_MouseLeftButtonDown({param($sender,$e)if($e.LeftButton -eq 'Pressed'){[Windows.Window]::GetWindow($sender).DragMove()}})
+        foreach($name in @('Close','CloseX')){$errorWindow.FindName($name).Add_Click({param($sender,$e)[Windows.Window]::GetWindow($sender).Close()})}
+        $errorWindow.Add_KeyDown({param($sender,$e)if($e.Key -eq 'Escape'){$sender.Close()}})
+        [void]$errorWindow.ShowDialog()
+    }
     exit 1
 }
