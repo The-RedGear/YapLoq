@@ -91,7 +91,7 @@ class Maintenance:
                 for name, payload in files.items():
                     Path(stage, name).write_bytes(payload)
                 candidate = Settings(Path(stage, 'settings.json'))
-                if not candidate._loaded_mtime_ns:
+                if not candidate._loaded_signature:
                     raise ValueError('Settings backup could not be loaded')
                 if 'viewers.json' in files:
                     ViewerStore(Path(stage, 'viewers.json')).all()
@@ -154,7 +154,7 @@ class Maintenance:
         try:
             temp.write_text(json.dumps(current, indent=2), encoding="utf-8")
             candidate = Settings(temp)
-            if not candidate._loaded_mtime_ns:
+            if not candidate._loaded_signature:
                 raise ValueError("This profile contains invalid settings")
             self.backup()
             temp.replace(self.settings.path)

@@ -1,4 +1,5 @@
 import json
+import os
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -55,6 +56,32 @@ def test_saved_file_changes_preserve_unsaved_overlay_until_reset(tmp_path):
     assert settings.max_queue == 19 and settings.split_speech_sentences
     settings.apply_runtime(None)
     assert settings.max_queue == saved.max_queue
+
+
+@pytest.mark.parametrize('atomic', [True, False])
+def test_same_timestamp_save_is_detected_without_losing_live_draft(tmp_path, atomic):
+    settings = Settings(tmp_path / 'settings.json')
+    settings.assignment_default_voice = 'Voice A'
+    settings.save()
+    settings.apply_runtime({'max_queue': 19})
+    before = settings.path.stat()
+    contents = settings.path.read_text(encoding='utf-8').replace('Voice A', 'Voice B')
+    if atomic:
+        replacement = settings.path.with_suffix('.replacement')
+        replacement.write_text(contents, encoding='utf-8')
+        os.utime(replacement, ns=(before.st_atime_ns, before.st_mtime_ns))
+        replacement.replace(settings.path)
+    else:
+        # Also cover in-place writes with unchanged timestamps but different sizes.
+        settings.path.write_text(contents + ' ', encoding='utf-8')
+        os.utime(settings.path, ns=(before.st_atime_ns, before.st_mtime_ns))
+    assert settings.path.stat().st_mtime_ns == before.st_mtime_ns
+    assert settings.reload_if_changed()
+    assert settings.assignment_default_voice == 'Voice B'
+    assert settings.max_queue == 19
+    assert not settings.reload_if_changed()
+    settings.apply_runtime(None)
+    assert settings.max_queue == Settings(settings.path).max_queue
 
 
 def test_live_sentence_setting_affects_future_requests_without_save(tmp_path):

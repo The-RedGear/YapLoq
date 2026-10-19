@@ -58,7 +58,7 @@ class Settings:
         self._runtime_context = local()
         self.path = path or default_config_dir() / "settings.json"
         self.lock = RLock()
-        self._loaded_mtime_ns = 0
+        self._loaded_signature = None
         self.voice_studio_url = "http://127.0.0.1:3900"
         self.api_key = "local"
         self.request_timeout = 120.0
@@ -191,6 +191,9 @@ class Settings:
         try:
             # Windows PowerShell 5 writes UTF-8 JSON with a BOM.
             try:
+                # Capture before reading so a concurrent replacement is noticed
+                # on the next reload rather than marked as already consumed.
+                loaded_signature = self._file_signature() if payload is None else None
                 data = payload if payload is not None else json.loads(self.path.read_text(encoding="utf-8-sig"))
                 if not isinstance(data, dict):
                     raise ValueError("Settings must be an object")
@@ -329,7 +332,7 @@ class Settings:
                     for name, value in aliases.items()
                 }
             if payload is None:
-                self._loaded_mtime_ns = self.path.stat().st_mtime_ns
+                self._loaded_signature = loaded_signature
         except (OSError, ValueError, TypeError, AttributeError, json.JSONDecodeError):
             self.__dict__.clear()
             self.__dict__.update(previous_state)
@@ -378,24 +381,30 @@ class Settings:
             return []
         return [str(value) for value in raw]
 
+    def _file_signature(self):
+        info = self.path.stat()
+        # Atomic saves can share a timestamp, particularly on Windows. File
+        # identity detects same-size replacements without hashing every poll.
+        return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
     def reload_if_changed(self) -> bool:
         """Reload settings written by the WPF front end without restarting."""
         try:
-            modified = self.path.stat().st_mtime_ns
+            modified = self._file_signature()
         except OSError:
             return False
-        if modified == self._loaded_mtime_ns:
+        if modified == self._loaded_signature:
             return False
         with self.lock:
             # Recheck after taking the lock in case another request reloaded it.
             try:
-                modified = self.path.stat().st_mtime_ns
+                modified = self._file_signature()
             except OSError:
                 return False
-            if modified == self._loaded_mtime_ns:
+            if modified == self._loaded_signature:
                 return False
             self.load()
-            return self._loaded_mtime_ns == modified
+            return self._loaded_signature == modified
 
     def save(self) -> None:
         # Backend record/profile saves must not persist a UI's temporary overlay.
@@ -514,7 +523,7 @@ class Settings:
                 except (OSError, ValueError):
                     pass  # Never replace the good backup with a broken file.
             temp.replace(self.path)
-            self._loaded_mtime_ns = self.path.stat().st_mtime_ns
+            self._loaded_signature = self._file_signature()
 
     def get_alias(self, name: str) -> VoiceAlias | None:
         self.reload_if_changed()

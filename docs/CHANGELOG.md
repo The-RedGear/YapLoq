@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Saved settings are detected reliably even when rapid Windows saves share a timestamp, without losing unsaved live changes.
+
 ## 0.6.0 — Assignments, multi-voice speech and live settings
 
 - Redesigned Assignments with special viewer voices, edit/delete, role/group defaults and an inline fallback voice.
