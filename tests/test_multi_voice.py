@@ -28,6 +28,29 @@ def queued(engine):
     return [(job.text, job.alias.name) for job in engine.pending.queue]
 
 
+@pytest.mark.parametrize('message,split,count', [
+    ('Hello', False, 1),
+    ('[Other] Hello [EventVoice] Goodbye', False, 2),
+    ('First sentence. Second sentence.', True, 2),
+    ('[Other] First sentence. Second sentence. [EventVoice] Goodbye.', True, 3),
+])
+def test_queue_added_fires_once_per_input_in_empty_and_active_queue(engine, message, split, count):
+    engine.settings.split_speech_sentences = split
+    events = []
+    engine.events.subscribe(lambda source, event, data: events.append((event, data)))
+    for request_index in range(2):
+        before = len([e for e in events if e[0] == 'queueadded'])
+        result = speak(engine, message)
+        added = [data for event, data in events if event == 'queueadded']
+        assert len(added) == before + 1
+        assert len(result['speechIds']) == count
+        assert added[-1]['id'] == result['speechIds'][0]
+        if count > 1:
+            assert added[-1]['speechIds'] == result['speechIds']
+            assert added[-1]['segmentCount'] == count
+    assert len([event for event, _ in events if event == 'received']) == 2 * count
+
+
 @pytest.mark.parametrize('text,expected', [
     ('!say [Other] Hello there', [('Hello there', 'Other')]),
     ('@viewer [Other] Hello there', [('Hello there', 'Other')]),

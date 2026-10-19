@@ -24,7 +24,7 @@ function Update-ServiceConnectionForms {
 function Update-ServiceSecretPlaceholder($sender) {
     $entry=$sender.Resources['YapLoqCredential']
     if($entry -and $entry.Mask.Resources.Contains('CredentialPlaceholder')){
-        $entry.Mask.Resources['CredentialPlaceholder'].Visibility=if($entry.Mask.Password -or $entry.Unavailable){'Collapsed'}else{'Visible'}
+        $entry.Mask.Resources['CredentialPlaceholder'].Visibility=if($entry.Mask.Password -or $entry.Mask.IsKeyboardFocusWithin -or $entry.Unavailable){'Collapsed'}else{'Visible'}
     }
 }
 function Install-ServicePlaceholders {
@@ -46,6 +46,8 @@ function Install-ServicePlaceholders {
             $entry.Mask.Resources['CredentialPlaceholder']=$placeholder
             [void]$entry.Mask.Parent.Children.Add($placeholder)
             $entry.Mask.Add_PasswordChanged({param($sender,$e)Update-ServiceSecretPlaceholder $sender})
+            $entry.Mask.Add_GotKeyboardFocus({param($sender,$e)Update-ServiceSecretPlaceholder $sender})
+            $entry.Mask.Add_LostKeyboardFocus({param($sender,$e)Update-ServiceSecretPlaceholder $sender})
             Update-ServiceSecretPlaceholder $entry.Mask
         }else{$control.Tag=$hints[$name]}
     }

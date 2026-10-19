@@ -257,6 +257,13 @@ function Install-YapLoqAutomations {
     Set-AutomationButtonIcon 'AutomationNew' 'mdi:plus' 'Add action' $true
     Set-AutomationButtonIcon 'AutomationTriggerAdd' 'mdi:plus' 'Add trigger' $true
     (Get-AutomationControl 'AutomationSearch').Add_TextChanged({Set-AutomationSearch})
+    (Get-AutomationControl 'AutomationName').Add_TextChanged({
+        if($script:automationSelecting -or -not $script:automationSelected){return}
+        $script:automationSelected.name=(Get-AutomationControl 'AutomationName').Text
+        $script:automationSelecting=$true
+        try{(Get-AutomationControl 'AutomationList').Items.Refresh()}finally{$script:automationSelecting=$false}
+        if(Get-Command Update-GlobalSaveGroup -ErrorAction SilentlyContinue){Update-GlobalSaveGroup 'Actions'}
+    })
     foreach($column in (Get-AutomationControl 'AutomationSteps').Columns){if($column -is [Windows.Controls.DataGridTextColumn]){$column.ElementStyle=$window.FindResource('GridText')}}
     (Get-AutomationControl 'AutomationSteps').Columns[0].Width=55
     (Get-AutomationControl 'AutomationSteps').RowHeight=34
@@ -296,7 +303,7 @@ function Install-YapLoqAutomations {
         if(-not(Save-AutomationDraft)){$script:automationSelecting=$true;(Get-AutomationControl 'AutomationList').SelectedItem=$script:automationSelected;$script:automationSelecting=$false;return}
         Show-AutomationDraft (Get-AutomationControl 'AutomationList').SelectedItem
     })
-    (Get-AutomationControl 'AutomationNew').Add_Click({if(-not $script:automationLoaded){$script:automationCreateAfterLoad=$true;Start-AutomationLoad;return};if(-not(Save-AutomationDraft)){return};(Get-AutomationControl 'AutomationSearch').Text='';$rule=[pscustomobject]@{id=[guid]::NewGuid().ToString();name='New action';enabled=$true;triggers=@();steps=@();conditions=@();onError='stop'};$script:automationRules+= $rule;Refresh-AutomationList $rule;(Get-AutomationControl 'AutomationName').Focus()|Out-Null})
+    (Get-AutomationControl 'AutomationNew').Add_Click({if(-not $script:automationLoaded){$script:automationCreateAfterLoad=$true;Start-AutomationLoad;return};if(-not(Save-AutomationDraft)){return};(Get-AutomationControl 'AutomationSearch').Text='';$rule=[pscustomobject]@{id=[guid]::NewGuid().ToString();name='';enabled=$true;triggers=@();steps=@();conditions=@();onError='stop'};$script:automationRules+= $rule;Refresh-AutomationList $rule;(Get-AutomationControl 'AutomationName').Focus()|Out-Null})
     (Get-AutomationControl 'AutomationDuplicate').Add_Click({if(-not(Save-AutomationDraft) -or -not $script:automationSelected){return};$copy=$script:automationSelected|ConvertTo-Json -Depth 30|ConvertFrom-Json;$copy.id=[guid]::NewGuid().ToString();$copy.name+=' copy';$script:automationRules+=$copy;Refresh-AutomationList $copy})
     (Get-AutomationControl 'AutomationDelete').Add_Click({$id=$script:automationSelected.id;$script:automationRules=@($script:automationRules|Where-Object{$_.id -ne $id});Refresh-AutomationList (@($script:automationRules)[0])})
     (Get-AutomationControl 'AutomationUp').Add_Click({Move-AutomationItem 'rule' -1});(Get-AutomationControl 'AutomationDown').Add_Click({Move-AutomationItem 'rule' 1})

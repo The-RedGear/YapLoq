@@ -1,3 +1,5 @@
+Latest hotfix: [YapLoq 0.6.1](releases/0.6.1.md).
+
 # YapLoq 0.6.0
 
 More control over who speaks, smoother multi-voice messages, and a simpler

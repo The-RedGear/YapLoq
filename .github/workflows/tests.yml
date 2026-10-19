@@ -51,3 +51,6 @@ jobs:
       - name: Verify live settings and Discard
         shell: powershell
         run: powershell.exe -STA -NoProfile -ExecutionPolicy Bypass -File tests/test_live_settings_ui.ps1
+      - name: Verify real Save-and-exit flow
+        shell: powershell
+        run: powershell.exe -STA -NoProfile -ExecutionPolicy Bypass -File tests/test_main_exit_ui.ps1

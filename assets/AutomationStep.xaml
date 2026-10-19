@@ -7,7 +7,7 @@
    <StackPanel Name="StepActionFields" Margin="0,12,0,0">
     <TextBlock Text="Streamer.Bot action" VerticalAlignment="Center"/>
     <Grid Margin="0,8,0,0"><ComboBox Name="StepActionPicker" DisplayMemberPath="name" TextSearch.TextPath="name" IsEditable="True" IsTextSearchEnabled="False" StaysOpenOnEdit="True" ToolTip="Type to filter actions by name or ID, or choose one from the dropdown."/>
-     <TextBlock Text="Type an action name or choose one…" Foreground="#B9B2C2" Margin="12,0,38,0" VerticalAlignment="Center" IsHitTestVisible="False"><TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding Text, ElementName=StepActionPicker}" Value=""><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
+     <TextBlock Text="Type an action name or choose one…" Foreground="#B9B2C2" Margin="12,0,38,0" VerticalAlignment="Center" IsHitTestVisible="False"><TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding Text, ElementName=StepActionPicker}" Value=""><Setter Property="Visibility" Value="Visible"/></DataTrigger><DataTrigger Binding="{Binding IsKeyboardFocusWithin, ElementName=StepActionPicker}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
     </Grid>
     <TextBlock Name="StepSearchStatus" Text="Actions load automatically. Type to narrow the list." Foreground="#B9B2C2" TextWrapping="Wrap" Margin="0,6,0,0"/>
     <TextBlock Text="Arguments (optional JSON)" Margin="0,12,0,6"/>

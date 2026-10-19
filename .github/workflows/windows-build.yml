@@ -26,6 +26,9 @@ jobs:
       - name: Verify branding
         shell: powershell
         run: powershell.exe -STA -NoProfile -ExecutionPolicy Bypass -File tests/test_branding.ps1
+      - name: Verify Save-and-exit flow
+        shell: powershell
+        run: powershell.exe -STA -NoProfile -ExecutionPolicy Bypass -File tests/test_main_exit_ui.ps1
       - name: Package
         run: python -m PyInstaller --noconfirm YapLoq.spec
       - name: Verify packaged runtime

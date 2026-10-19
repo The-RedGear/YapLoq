@@ -1,7 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.6.1 — Hotfix
 
+- Saving during exit closes the app after success; failures remain visible in the prompt without discarding drafts.
+- Queue-added actions run once per message input, not once per generated clip.
+- Action names update immediately in the list; new names and empty fields use focus-aware placeholders.
 - Saved settings are detected reliably even when rapid Windows saves share a timestamp, without losing unsaved live changes.
 
 ## 0.6.0 — Assignments, multi-voice speech and live settings

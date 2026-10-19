@@ -611,7 +611,7 @@ function Install-YapLoqDashboard {
     $script:dashboardPlaceholder.Foreground = $window.FindResource('Muted'); $script:dashboardPlaceholder.IsHitTestVisible = $false
     [Windows.Controls.Grid]::SetRow($script:dashboardPlaceholder,[Windows.Controls.Grid]::GetRow($PlaygroundText))
     [void]$grid.Children.Add($script:dashboardPlaceholder)
-    $PlaygroundText.Add_TextChanged({$script:dashboardPlaceholder.Visibility=if($PlaygroundText.Text.Length){'Collapsed'}else{'Visible'}})
+    $PlaygroundText.Add_TextChanged({$script:dashboardPlaceholder.Visibility=if($PlaygroundText.Text.Length -or $PlaygroundText.IsKeyboardFocusWithin){'Collapsed'}else{'Visible'}})
     $PlaygroundText.Add_GotKeyboardFocus({$script:dashboardPlaceholder.Visibility='Collapsed'})
     $PlaygroundText.Add_LostKeyboardFocus({if(-not$PlaygroundText.Text.Length){$script:dashboardPlaceholder.Visibility='Visible'}})
     # Playback controls have one home in the persistent player.

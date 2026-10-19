@@ -35,6 +35,8 @@ $click=[Windows.Controls.Button]::ClickEvent
 Refresh-AutomationList $null
 (Get-AutomationControl 'AutomationNew').RaiseEvent([Windows.RoutedEventArgs]::new($click))
 if($script:automationRules.Count -ne 1 -or -not (Get-AutomationControl 'AutomationName').IsEnabled){throw 'Empty library cannot create its first action'}
+if((Get-AutomationControl 'AutomationName').Text -or $script:automationSelected.name){throw 'New action is stored as editable text instead of a placeholder'}
+if((Get-AutomationControl 'AutomationName').Tag -ne 'Action name'){throw 'Action name placeholder missing'}
 $script:automationRules=@();Refresh-AutomationList $null
 $newMenu=(Get-AutomationControl 'AutomationList').ContextMenu.Items[0]
 if($newMenu.Tag -ne 'AutomationNew'){throw 'Empty action list has no right-click Add action option'}
@@ -42,6 +44,18 @@ $newMenu.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.MenuItem]::
 if($script:automationRules.Count -ne 1){throw 'Right-click Add action did not create a draft'}
 (Get-AutomationControl 'AutomationName').Text='Avatar sequence'
 $window.Show();Set-Page 'streamActions';$window.UpdateLayout()
+$nameField=Get-AutomationControl 'AutomationName'
+if((Get-AutomationControl 'AutomationList').SelectedItem.name -ne 'Avatar sequence'){throw 'Action list name did not update while typing'}
+$nameField.Text='';[void]$nameField.Focus();$window.UpdateLayout()
+$watermark=$nameField.Template.FindName('Watermark',$nameField)
+if($watermark.Visibility -ne 'Collapsed'){throw 'Focused empty field still shows placeholder'}
+[void](Get-AutomationControl 'AutomationSearch').Focus();$window.UpdateLayout()
+if($watermark.Visibility -ne 'Visible'){throw 'Empty field placeholder did not return after losing focus'}
+$nameField.Text='Avatar sequence';$window.UpdateLayout()
+$list=Get-AutomationControl 'AutomationList'
+$container=$list.ItemContainerGenerator.ContainerFromItem($script:automationSelected)
+function Get-TestActionLabels($node){if($node -is [Windows.Controls.TextBlock]){$node.Text};for($index=0;$index -lt [Windows.Media.VisualTreeHelper]::GetChildrenCount($node);$index++){Get-TestActionLabels ([Windows.Media.VisualTreeHelper]::GetChild($node,$index))}}
+if('Avatar sequence' -notin @(Get-TestActionLabels $container)){throw 'Visible action label did not update'}
 (Get-AutomationControl 'AutomationTriggerAdd').RaiseEvent([Windows.RoutedEventArgs]::new($click))
 $browse=(Get-AutomationControl 'AutomationTriggerAdd').ContextMenu
 $browse.UpdateLayout()

@@ -105,7 +105,7 @@ function script:Discard-PendingSettings {
     $BottomStatus.Text='Unsaved edits discarded. Restoring saved active settings.'
 }
 
-function script:Show-UnsavedChangesPrompt($owner,[string]$context){
+function script:Show-UnsavedChangesPrompt($owner,[string]$context,[scriptblock]$saveAction=$null){
     $prompt=[Windows.Window]::new();$prompt.Owner=$owner;$prompt.Title='Unsaved changes'
     $prompt.Width=460;$prompt.SizeToContent='Height';$prompt.ResizeMode='NoResize';$prompt.WindowStartupLocation='CenterOwner'
     $prompt.Background=$window.Background;$prompt.Foreground=$window.Foreground
@@ -114,13 +114,25 @@ function script:Show-UnsavedChangesPrompt($owner,[string]$context){
     $panel=[Windows.Controls.StackPanel]::new();$panel.Margin=24;$prompt.Content=$panel
     $heading=[Windows.Controls.TextBlock]::new();$heading.Text='Save your changes?';$heading.FontSize=20;$heading.FontWeight='SemiBold';[void]$panel.Children.Add($heading)
     $message=[Windows.Controls.TextBlock]::new();$message.Text=$context;$message.TextWrapping='Wrap';$message.Margin='0,12,0,20';[void]$panel.Children.Add($message)
+    $errorText=[Windows.Controls.TextBlock]::new();$errorText.TextWrapping='Wrap';$errorText.Margin='0,0,0,16';$errorText.Visibility='Collapsed';[void]$panel.Children.Add($errorText)
+    $prompt.Resources['SaveError']=$errorText;$prompt.Resources['SaveAction']=$saveAction
     $buttons=[Windows.Controls.StackPanel]::new();$buttons.Orientation='Horizontal';$buttons.HorizontalAlignment='Right';[void]$panel.Children.Add($buttons)
     $prompt.Resources['Choice']='Cancel'
     foreach($choice in @('Cancel','Discard','Save')){
         $button=[Windows.Controls.Button]::new();$button.Content=$choice;$button.Tag=$choice;$button.Margin='6,0,0,0'
         if($choice -eq 'Save'){$button.Style=$window.FindResource('PrimaryButton');$button.IsDefault=$true}
         if($choice -eq 'Cancel'){$button.IsCancel=$true}
-        $button.Add_Click({param($sender,$e)$hostWindow=[Windows.Window]::GetWindow($sender);$hostWindow.Resources['Choice']=[string]$sender.Tag;$hostWindow.Close()})
+        $button.Add_Click({
+            param($sender,$e)
+            $hostWindow=[Windows.Window]::GetWindow($sender)
+            try{
+                if($sender.Tag -eq 'Save' -and $hostWindow.Resources['SaveAction']){& $hostWindow.Resources['SaveAction']}
+                $hostWindow.Resources['Choice']=[string]$sender.Tag;$hostWindow.Close()
+            }catch{
+                $hostWindow.Resources['SaveError'].Text='Could not save: '+$_.Exception.Message
+                $hostWindow.Resources['SaveError'].Visibility='Visible'
+            }
+        })
         [void]$buttons.Children.Add($button)
     }
     Apply-AppFont $prompt
@@ -140,14 +152,37 @@ function script:Confirm-GlobalSaveExit {
     }
     $dirty=@($script:globalSaveGroups.Values|Where-Object{$_.Dirty})
     if(-not $dirty.Count){return $true}
-    $choice=Show-UnsavedChangesPrompt $window ('Unsaved changes in '+(($dirty|ForEach-Object{$_.Key}) -join ', ')+'.')
+    $script:exitSaveCompleted=$false
+    $choice=Show-UnsavedChangesPrompt $window ('Unsaved changes in '+(($dirty|ForEach-Object{$_.Key}) -join ', ')+'.') {
+        Save-AllPendingChanges
+        if(@($script:globalSaveGroups.Values|Where-Object{$_.Dirty}).Count){throw $BottomStatus.Text}
+        $script:exitSaveCompleted=$true
+    }
     if($choice -eq 'Discard'){
         if($script:liveSettingsInstalled){try{[void](Invoke-BridgePost '/api/settings/runtime' @{reset=$true})}catch{$BottomStatus.Text='Could not restore saved active settings. Check the connection before exiting.';return $false}}
         return $true
     }
     if($choice -ne 'Save'){return $false}
-    Save-AllPendingChanges
+    if(-not $script:exitSaveCompleted){Save-AllPendingChanges}
     return -not @($script:globalSaveGroups.Values|Where-Object{$_.Dirty}).Count
+}
+
+function script:Install-MainWindowCloseGuard($target){
+    $target.Add_Closing({param($sender,$e)
+        if($sender.Resources['ExitApproved']){return}
+        $e.Cancel=$true
+        if($sender.Resources['ExitPending']){return}
+        $sender.Resources['ExitPending']=$true
+        # A save/prompt can change bindings and focus. Complete the original
+        # Closing event first, then issue a fresh close only after success.
+        [void]$sender.Dispatcher.BeginInvoke([action]{
+            try{
+                if(Confirm-GlobalSaveExit){$sender.Resources['ExitApproved']=$true;$script:allowClose=$true;$sender.Close()}
+                else{$script:allowClose=$false}
+            }catch{$script:allowClose=$false;$BottomStatus.Text='Unable to close: '+$_.Exception.Message}
+            finally{$sender.Resources['ExitPending']=$false}
+        }.GetNewClosure())
+    })
 }
 
 function script:Get-EditorDraftFingerprint($dialog){

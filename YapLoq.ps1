@@ -4500,10 +4500,7 @@ $script:progressTimer.Add_Tick({
 })
 $script:stateTimer.Start()
 $script:progressTimer.Start()
-$window.Add_Closing({param($sender,$e)
-    try{if(-not (Confirm-GlobalSaveExit)){$e.Cancel=$true;$script:allowClose=$false}}
-    catch{$e.Cancel=$true;$script:allowClose=$false;$BottomStatus.Text='Unable to check pending changes. Save your edits before exiting.'}
-})
+Install-MainWindowCloseGuard $window
 $window.Add_Closed({
     foreach($timer in @($script:liveSettingsDebounce,$script:liveSettingsPump)){if($timer){$timer.Stop()}}
     if($script:liveSettingsClient){$script:liveSettingsClient.CancelAsync();$script:liveSettingsClient.Dispose()}
