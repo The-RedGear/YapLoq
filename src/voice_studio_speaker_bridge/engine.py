@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 import json
 import random
 import re
@@ -49,6 +50,7 @@ class SpeechEngine:
         self.history: list[dict] = self._load_history()
         self._retention_limit = self.settings.history_limit
         self.thread = Thread(target=self._run, name="Speech queue", daemon=True)
+        self.prepare_thread = Thread(target=self._prepare_upcoming, name="Upcoming speech", daemon=True)
         self.queue_path = settings.path.parent / "queue.json"
         if settings.persist_queue:
             self._restore_queue()
@@ -66,7 +68,8 @@ class SpeechEngine:
                 jobs = ([self._current] if self._current else []) + list(self.pending.queue)
                 values = [{"text": job.text, "alias": job.alias.to_dict(), "name": job.alias.name,
                            "source": job.source, "user": job.user, "priority": job.priority,
-                           "timestamp": job.timestamp, "replay_recording": job.replay_recording,
+                           "platform": job.platform, "userId": job.user_id, "displayName": job.display_name,
+                           "timestamp": job.timestamp, "segmentIndex": job.segment_index, "replay_recording": job.replay_recording,
                            "audio_path": job.audio_path if job.replay_recording else ""}
                           for job in jobs if job and not job.cancelled and job.status not in {"Finished", "Error", "Cancelled", "Skipped", "Removed"}]
             temporary = self.queue_path.with_suffix(".tmp")
@@ -83,7 +86,8 @@ class SpeechEngine:
             for value in values[:self.settings.max_queue]:
                 job = SpeechJob(value["text"], VoiceAlias.from_dict(value["name"], value["alias"]),
                     source=value.get("source", "Restored"), user=value.get("user", ""),
-                    priority=int(value.get("priority", 0)), timestamp=value["timestamp"])
+                    priority=int(value.get("priority", 0)), timestamp=value["timestamp"],
+                    platform=value.get('platform', ''), user_id=value.get('userId', ''), display_name=value.get('displayName', ''), segment_index=int(value.get('segmentIndex', 0)))
                 age = max(0, (datetime.now().astimezone() - datetime.fromisoformat(job.timestamp.replace("Z", "+00:00"))).total_seconds())
                 job.enqueued_at = monotonic() - age
                 if value.get("replay_recording"):
@@ -154,6 +158,7 @@ class SpeechEngine:
                     self.events.emit("texttospeech", "received", self._event_data(job))
                     job.registered = True
             self.thread.start()
+            self.prepare_thread.start()
 
     def shutdown(self) -> None:
         if self._stop.is_set():
@@ -175,13 +180,45 @@ class SpeechEngine:
         self.pending.put(None)
         if self.thread.is_alive():
             self.thread.join(timeout=5)
+        if self.prepare_thread.is_alive():
+            self.prepare_thread.join(timeout=5)
 
-    def enqueue(self, text: str, alias: VoiceAlias, source: str = "Manual", user: str = "", priority: int = 0) -> SpeechJob:
+    def enqueue(self, text: str, alias: VoiceAlias, source: str = "Manual", user: str = "", priority: int = 0,
+                *, platform: str = "", user_id: str = "", display_name: str = "") -> SpeechJob:
         # All transport threads share one admission boundary for limits/cooldowns.
         with self._admission_lock:
-            return self._enqueue(text, alias, source, user, priority)
+            return self._enqueue(text, alias, source, user, priority,
+                                 viewer=dict(platform=platform, user_id=user_id, display_name=display_name))
 
-    def _enqueue(self, text: str, alias: VoiceAlias, source: str, user: str, priority: int, *, recording: str = "") -> SpeechJob:
+    def enqueue_many(self, segments, source='Manual', user='', priority=0, *, platform='', user_id='', display_name=''):
+        """Validate one input completely before publishing any of its ordered segments."""
+        with self._admission_lock:
+            if not segments:
+                raise ValueError('Message is empty')
+            viewer = dict(platform=platform, user_id=user_id, display_name=display_name)
+            jobs = [self._enqueue(text, alias, source, user, priority, viewer=viewer, dry_run=True)
+                    for text, alias in segments]
+            if sum(len(job.text) for job in jobs) > self.settings.max_characters:
+                raise ValueError(f'Message exceeds the {self.settings.max_characters}-character limit')
+            if self.pending.qsize() + len(jobs) > self.settings.max_queue:
+                raise ValueError(f'Speech queue cannot fit all {len(jobs)} segments')
+            with self._lock, self.pending.mutex:
+                existing = list(self.pending.queue) + ([self._current] if self._current else [])
+                count = sum(job is not None and not job.cancelled and job.user.casefold() == user.casefold() for job in existing)
+            if user and self.settings.per_user_queue_limit and count + len(jobs) > self.settings.per_user_queue_limit:
+                raise ValueError(f'{user} has reached their queue limit')
+            now = monotonic()
+            self._last_global_request = now
+            if user.strip():
+                self._last_user_request[user.casefold().strip()] = now
+            with self._lock:
+                for index, job in enumerate(jobs):
+                    job.segment_index = index
+                    self._recent_requests[(user.casefold(), job.alias.name, job.text.casefold())] = now
+                    self._publish_job(job)
+            return jobs
+
+    def _enqueue(self, text: str, alias: VoiceAlias, source: str, user: str, priority: int, *, recording: str = "", viewer: dict | None = None, dry_run=False) -> SpeechJob:
         if self._stop.is_set():
             raise ValueError("YapLoq is shutting down")
         if not self._enabled:
@@ -215,15 +252,21 @@ class SpeechEngine:
             last = self._last_user_request.get(user_key, 0.0)
             if now - last < self.settings.per_user_cooldown:
                 raise ValueError(f"{user} is still on speech cooldown")
-            self._last_user_request[user_key] = now
-        if not recording:
+            if not dry_run:
+                self._last_user_request[user_key] = now
+        if not recording and not dry_run:
             self._last_global_request = now
             self._recent_requests[duplicate_key] = now
         job = SpeechJob(text=text, alias=alias, source=source or "Manual", user=user,
-                        priority=max(-100, min(100, int(priority))))
+                        priority=max(-100, min(100, int(priority))), **(viewer or {}))
         if recording:
             job.audio_path = recording
             job.replay_recording = True
+        if not dry_run:
+            self._publish_job(job)
+        return job
+
+    def _publish_job(self, job):
         with self._lock:
             queue_is_active = (self._current is not None and self._current.status not in {"Finished", "Error", "Cancelled", "Skipped"}) or self.pending.qsize() > 0
             # Register the first job too, before a fast worker can finish it.
@@ -239,7 +282,6 @@ class SpeechEngine:
             if queue_is_active:
                 self.events.emit("texttospeech", "queueadded", self._event_data(job))
             self._save_queue()
-        return job
 
     def _prepare_ssml(self, text: str, user: str, alias: VoiceAlias) -> str:
         provider = registry.providers.get(alias.provider)
@@ -405,7 +447,8 @@ class SpeechEngine:
                 "alias": job.alias.name, "voice": job.alias.voice_id, "source": job.source,
                 "user": job.user, "status": job.status, "duration": job.duration_ms,
                 "error": job.error, "audioPath": job.audio_path, "priority": job.priority,
-                "provider": job.alias.provider}
+                "provider": job.alias.provider, "platform": job.platform,
+                "userId": job.user_id, "displayName": job.display_name, "segmentIndex": job.segment_index}
 
     def replay_history(self, speech_id: str) -> SpeechJob:
         with self._history_lock:
@@ -585,10 +628,37 @@ class SpeechEngine:
             "alias": job.alias.name,
             "source": job.source,
             "user": job.user,
+            "platform": job.platform,
+            "userId": job.user_id,
+            "displayName": job.display_name,
+            "segmentIndex": job.segment_index,
             "pitch": 0.0,
             "volume": job.alias.volume,
             "rate": job.alias.speed,
         }
+
+    def change_waiting_voice(self, speech_id: str, alias_name: str) -> dict:
+        with self._admission_lock, self._lock, self.pending.mutex:
+            self.settings.reload_if_changed()
+            job = next((item for item in self.pending.queue if item and item.speech_id == speech_id), None)
+            if job is None or job.cancelled:
+                raise ValueError('This message is no longer waiting. Playing and completed speech cannot be changed.')
+            if job.generation_started or job.replay_recording or job.status != 'Queued':
+                raise ValueError('This message has already started generating or has cached audio. Choose a message still marked Queued.')
+            alias = self.settings.get_alias(alias_name)
+            if alias is None or not alias.enabled:
+                raise ValueError('Choose an enabled voice alias.')
+            if alias.ssml != job.alias.ssml:
+                raise ValueError('Choose a voice with the same plain-text or SSML mode as this message.')
+            if alias.ssml:
+                self._prepare_ssml(job.text, job.user, alias)
+            previous = job.alias.name
+            job.alias = replace(alias)
+            result = self._job_dict(job)
+        with self._admission_lock:
+            self._save_queue()
+        self.events.emit('texttospeech', 'voicechanged', dict(self._event_data(job), previousAlias=previous))
+        return result
 
     def move_before(self, speech_id: str, before_id: str) -> bool:
         with self._admission_lock, self.pending.mutex:
@@ -705,6 +775,9 @@ class SpeechEngine:
         result: Queue = Queue(maxsize=1)
         def generate():
             try:
+                if job.cancelled or self._stop.is_set():
+                    result.put((None, None))
+                    return
                 result.put((self._synthesize(job), None))
             except Exception as exc:
                 result.put((None, exc))
@@ -720,6 +793,73 @@ class SpeechEngine:
                 raise error
             return wav
         return None
+
+    def _generated_audio(self, job: SpeechJob) -> bytes | None:
+        # The queue worker and look-ahead worker share one generation result.
+        # A manual move may make a preparing entry current; never synthesize twice.
+        with self._lock:
+            owner = not job.generation_started
+            if owner:
+                job.generation_started = True
+        if owner:
+            try:
+                if job.cancelled or self._stop.is_set():
+                    return None
+                job.status = "Generating"
+                self.events.emit("texttospeech", "generating", self._event_data(job))
+                wav = self._generate(job)
+                if wav is None or job.cancelled or self._stop.is_set():
+                    return None
+                try:
+                    with self._admission_lock:
+                        if job.cancelled or self._stop.is_set():
+                            return None
+                        path = self._cache_file_path(job)
+                        path.write_bytes(wav)
+                        job.audio_path = str(path)
+                except OSError:
+                    logging.exception("Could not cache generated voice audio")
+                    job.audio_bytes = wav
+                if not job.cancelled:
+                    job.status = "Ready"
+            except Exception as exc:
+                job.generation_error = str(exc)
+                job.error = str(exc)
+                if not job.cancelled:
+                    job.status = "Error"
+            finally:
+                job.generation_done.set()
+        while not job.generation_done.wait(0.025):
+            if job.cancelled or self._stop.is_set():
+                return None
+        if job.cancelled or self._stop.is_set():
+            return None
+        if job.generation_error:
+            raise RuntimeError(job.generation_error)
+        return job.audio_bytes if job.audio_bytes is not None else Path(job.audio_path).read_bytes()
+
+    def _prepare_upcoming(self) -> None:
+        # Only prepare while audio is actually playing, never drain the queue
+        # into paid provider calls while paused. Keep at most two prepared jobs
+        # after explicit reorders; ordinary playback looks ahead by one entry.
+        while not self._stop.wait(0.025):
+            with self._lock, self.pending.mutex:
+                if self._paused.is_set() or not self._current or self._current.status != "Playing":
+                    continue
+                waiting = [job for job in self.pending.queue if job and not job.cancelled]
+                if not waiting or sum(job.generation_started for job in waiting) >= 2:
+                    continue
+                job = waiting[0]
+                if job.generation_started or job.replay_recording or job.audio_bytes is not None:
+                    continue
+                if self.settings.max_message_age and monotonic() - job.enqueued_at > self.settings.max_message_age:
+                    continue
+            try:
+                self._generated_audio(job)
+            except Exception:
+                # Keep the failure on this entry. The playback worker publishes
+                # its terminal event in order, then continues with the next job.
+                logging.exception("Could not prepare upcoming speech")
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -747,19 +887,17 @@ class SpeechEngine:
                     job.status = "Cancelled"
                     job.error = "Message expired before playback"
                     continue
-                job.status = "Generating"
                 if job.audio_bytes is not None:
                     wav = job.audio_bytes
                 elif job.replay_recording and job.audio_path:
                     wav = Path(job.audio_path).read_bytes()
                 else:
-                    self.events.emit("texttospeech", "generating", self._event_data(job))
-                    wav = self._generate(job)
+                    wav = self._generated_audio(job)
                 if wav is None:
                     job.status = "Cancelled"
                     continue
                 try:
-                    if not job.replay_recording:
+                    if not job.replay_recording and not job.audio_path:
                         cache_path = self._cache_file_path(job)
                         cache_path.write_bytes(wav)
                         job.audio_path = str(cache_path)

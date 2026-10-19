@@ -26,8 +26,16 @@ class VoiceAlias:
     ssml: bool = False
     icon_id: str = "mdi:music-note"
     color: str = "#B6A3FF"
+    public: bool = False
+    public_name: str = ''
+    viewer_access: str = 'everyone'
 
     def __post_init__(self):
+        self.public = self.public is True
+        self.public_name = str(self.public_name or '').strip()
+        if self.viewer_access not in {'everyone', 'subscribers', 'vips', 'moderators', 'broadcaster'}:
+            self.public = False  # Unknown permission metadata must fail closed.
+            self.viewer_access = 'everyone'
         palette = {"#E6A0B1", "#E8AD91", "#E4CA8B", "#A9C98C", "#87C9AF", "#86C6CB", "#91B4E4", "#A4A4E8", "#B6A3FF", "#D3A0D5"}
         self.color = str(self.color).upper() if str(self.color).upper() in palette else "#B6A3FF"
         icon = str(self.icon_id).strip().lower()
@@ -67,6 +75,9 @@ class VoiceAlias:
             ssml=bool(value.get("ssml", False)),
             icon_id=str(value.get("icon_id", "mdi:music-note")),
             color=str(value.get("color", "#B6A3FF")),
+            public=value.get('public') is True,
+            public_name=str(value.get('public_name') or ''),
+            viewer_access=str(value.get('viewer_access') or 'everyone'),
         )
 
     def to_dict(self) -> dict:
@@ -85,6 +96,9 @@ class VoiceAlias:
             "ssml": self.ssml,
             "icon_id": self.icon_id,
             "color": self.color,
+            'public': self.public,
+            'public_name': self.public_name,
+            'viewer_access': self.viewer_access,
         }
 
 
@@ -110,3 +124,10 @@ class SpeechJob:
     cancel_event: Event = field(default_factory=Event, repr=False)
     registered: bool = False
     replay_recording: bool = False
+    generation_started: bool = False
+    generation_done: Event = field(default_factory=Event, repr=False)
+    generation_error: str = ""
+    platform: str = ""
+    user_id: str = ""
+    display_name: str = ""
+    segment_index: int = 0

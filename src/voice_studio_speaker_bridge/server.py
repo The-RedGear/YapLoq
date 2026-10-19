@@ -160,6 +160,12 @@ class BridgeServers:
                     bridge.settings.reload_if_changed()
                     self._reply(200, {'ok': True, 'result': {'rules': effective_rules(bridge.settings), 'events': CATALOG, 'fields': FIELDS, 'migrated': bridge.settings.automations_migrated}})
                     return
+                if path == '/api/viewers':
+                    try:
+                        self._reply(200, {'ok': True, 'result': bridge.protocol.execute('GetViewers', {})})
+                    except ValueError as exc:
+                        self._reply(400, {'ok': False, 'error': str(exc)})
+                    return
                 if path == '/api/automations/actions':
                     try:
                         bridge.settings.reload_if_changed()
@@ -241,9 +247,10 @@ class BridgeServers:
                 routes = {"/speak": "Speak", "/stop": "Stop", "/clear": "Clear",
                           "/pause": "Pause", "/resume": "Resume", "/skip": "Stop", "/api/playback/seek": "Seek",
                           "/pause-after-current": "PauseAfterCurrent", "/clear-all": "ClearAll",
-                          "/api/profiles/load": "LoadProfile",
+                          "/api/profiles/load": "LoadProfile", "/api/viewers/set": "SetViewerVoice",
+                          '/api/viewers/command': 'ViewerVoiceCommand', '/api/viewers/public': 'GetPublicVoices',
                           "/api/history/clear": "ClearHistory", "/api/history/save": "SaveHistoryAudio", "/api/history/replay": "ReplayHistory", "/api/queue/remove": "RemoveSpeech",
-                          "/api/queue/move": "MoveSpeech", "/api/queue/reorder": "ReorderSpeech"}
+                          "/api/queue/move": "MoveSpeech", "/api/queue/reorder": "ReorderSpeech", "/api/queue/voice": "ChangeSpeechVoice"}
                 command = routes.get(self.path.rstrip("/"))
                 is_streamerbot_test = self.path.rstrip("/") == "/api/integrations/streamerbot/test"
                 is_udp_test = self.path.rstrip('/') == '/api/integrations/udp-test'
@@ -263,7 +270,7 @@ class BridgeServers:
                         raise ValueError("JSON body must be an object")
                     if is_automation_save:
                         rules = validate_rules(data.get('rules'))
-                        maintenance = Maintenance(bridge.settings)
+                        maintenance = Maintenance(bridge.settings, getattr(bridge.protocol, 'viewers', None))
                         maintenance.backup()
                         bridge.settings.automations = rules
                         bridge.settings.automations_migrated = True
@@ -278,7 +285,7 @@ class BridgeServers:
                         self._reply(200, {"ok": True, "result": {"speechId": job.speech_id}})
                         return
                     if maintenance_action:
-                        maintenance = Maintenance(bridge.settings)
+                        maintenance = Maintenance(bridge.settings, getattr(bridge.protocol, 'viewers', None))
                         if maintenance_action == "backup":
                             result = {"path": maintenance.backup()}
                         elif maintenance_action == "restore":
@@ -304,6 +311,10 @@ class BridgeServers:
                             result = {"path": maintenance.save_profile(str(data.get("name", "")))}
                         elif maintenance_action == "streamerbot-export":
                             result = {"path": maintenance.export_streamerbot(str(data.get("alias", "")))}
+                        elif maintenance_action == 'viewer-command-export':
+                            result = {'path': maintenance.export_viewer_command(str(data.get('platform', '')))}
+                        elif maintenance_action == 'validate-actions':
+                            result = {'rules': validate_rules(data.get('rules'))}
                         else:
                             raise ValueError("Unknown maintenance action")
                         self._reply(200, {"ok": True, "result": result})
@@ -451,7 +462,7 @@ class BridgeServers:
                     raw = self.request[0].decode("utf-8").strip()
                     lines = raw.splitlines()
                     packet_type = lines[0].strip().upper() if lines else ""
-                    if packet_type == "VSPEAK":
+                    if packet_type in {"VSPEAK", "YAPLOQ"}:
                         parts = raw.splitlines(keepends=False)
                         if len(parts) < 3:
                             raise ValueError("VSPEAK packet requires an alias and message")
@@ -501,6 +512,24 @@ class BridgeServers:
                         if len(parts) == 4 and data.get("user") and not data.get("userName"):
                             # One identity line: accept display or login for voice rules.
                             data["userName"] = data["user"]
+                    elif packet_type in {'VSPEAK2', 'YAPLOQ2'}:
+                        parts = raw.splitlines()
+                        if len(parts) < 10:
+                            raise ValueError('VSPEAK2 requires alias, platform, user ID, name, role, audience flags and message')
+                        command = 'Speak'
+                        data = dict(voice=parts[1].strip(), platform=parts[2].strip(), userId=parts[3].strip(),
+                                    user=parts[4].strip(), role=parts[5].strip(),
+                                    isSubscribed=parts[6].strip().casefold() == 'true',
+                                    isVip=parts[7].strip().casefold() == 'true',
+                                    isModerator=parts[8].strip().casefold() == 'true', message='\n'.join(parts[9:]), source='Streamer.bot')
+                    elif packet_type in {'VVOICE', 'YAPLOQVOICE'}:
+                        parts = raw.splitlines()
+                        if len(parts) < 9:
+                            raise ValueError('VVOICE requires platform, user ID, name, role, subscription/VIP/mod flags and command text')
+                        command = 'ViewerVoiceCommand'
+                        data = dict(platform=parts[1].strip(), userId=parts[2].strip(), user=parts[3].strip(), role=parts[4].strip(),
+                                    isSubscribed=parts[5].strip().casefold() == 'true', isVip=parts[6].strip().casefold() == 'true',
+                                    isModerator=parts[7].strip().casefold() == 'true', message='\n'.join(parts[8:]))
                     elif packet_type == "VCONTROL":
                         parts = lines
                         action = parts[1].strip().casefold() if len(parts) > 1 else ""

@@ -13,7 +13,7 @@
     <TextBlock Text="Arguments (optional JSON)" Margin="0,12,0,6"/>
     <TextBox Name="StepArguments" AcceptsReturn="True" Height="72" VerticalScrollBarVisibility="Auto" Text="{}{}"/>
     <TextBlock Text="Leave {} for no arguments. Example: {&quot;message&quot;: &quot;{ttsText}&quot;}" Foreground="#B9B2C2" TextWrapping="Wrap" Margin="0,6,0,0"/>
-    <TextBlock Text="Available values: {ttsText}, {ttsAlias}, {ttsUser}, {ttsId}, {ttsSource}, {ttsVoice}, {ttsEngine}, {ttsError}, {ttsState}, {ttsDuration}." Foreground="#B9B2C2" TextWrapping="Wrap" Margin="0,6,0,0"/>
+    <TextBlock Text="Available values: {ttsText}, {ttsAlias}, {ttsUser}, {ttsId}, {ttsSource}, {ttsVoice}, {ttsEngine}, {ttsError}, {ttsState}, {ttsDuration}. Viewer events: {ttsPlatform}, {ttsUserId}, {ttsPublicVoice}, {ttsReply}, {ttsReason}." Foreground="#B9B2C2" TextWrapping="Wrap" Margin="0,6,0,0"/>
    </StackPanel>
    <StackPanel Name="StepDelayFields" Visibility="Collapsed" Margin="0,12,0,0"><TextBlock Text="Delay in seconds"/><TextBox Name="StepDelay" Text="1" Margin="0,6,0,0"/></StackPanel>
    <TextBlock Name="StepStatus" Foreground="#B9B2C2" TextWrapping="Wrap" Margin="0,10,0,0"/>

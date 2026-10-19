@@ -42,9 +42,9 @@ class IntegrationTests(unittest.TestCase):
         engine = Mock()
         engine.enqueue.return_value = SpeechJob("hi", self.settings.aliases["ViewerVoice"])
         protocol = SpeakerBotProtocol(self.settings, engine)
-        protocol.execute("Speak", {"message": "hi", "user": "CoolViewer", "userName": "otherlogin", "voice": "EventVoice"})
+        protocol.execute("Speak", {"message": "hi", "user": "CoolViewer", "userName": "otherlogin"})
         self.assertEqual(engine.enqueue.call_args.args[1].name, "ViewerVoice")
-        protocol.execute("Speak", {"message": "hi", "user": "SomeoneElse", "userName": "CoolViewer", "voice": "EventVoice"})
+        protocol.execute("Speak", {"message": "hi", "user": "SomeoneElse", "userName": "CoolViewer"})
         self.assertEqual(engine.enqueue.call_args.args[1].name, "ViewerVoice")
 
 
@@ -60,7 +60,7 @@ class IntegrationTests(unittest.TestCase):
             '"name":"Patchoulii","role":1,"subscribed":true,"type":"twitch"}'
         )
         result = SpeakerBotProtocol(self.settings, engine).execute(
-            "Speak", {"message": "hi from chat", "user": blob, "userName": "patchoulii", "voice": "EventVoice"}
+            "Speak", {"message": "hi from chat", "user": blob, "userName": "patchoulii"}
         )
         self.assertEqual(engine.enqueue.call_args.args[0], "hi from chat")
         self.assertEqual(result["text"], "hi from chat")
@@ -168,7 +168,9 @@ class IntegrationTests(unittest.TestCase):
         maintenance = Maintenance(self.settings)
         backup = maintenance.reset("RESET")
         self.assertEqual(self.settings.max_queue, 25)
-        self.assertEqual(json.loads(Path(backup).read_text())["max_queue"], 55)
+        import zipfile
+        with zipfile.ZipFile(backup) as archive:
+            self.assertEqual(json.loads(archive.read('settings.json'))['max_queue'], 55)
 
     def test_streamerbot_export_has_valid_envelope_and_no_auto_run(self):
         encoded = export_actions(6670, "Windows voice")
@@ -180,7 +182,7 @@ class IntegrationTests(unittest.TestCase):
         actions = envelope["data"]["actions"]
         self.assertEqual(len(actions), 10)
         self.assertTrue(all(not action["triggers"] for action in actions))
-        self.assertEqual(actions[0]["actions"][0]["payload"], "VSPEAK\r\nWindows voice\r\n%message%\r\n%displayName%\r\n%userName%")
+        self.assertEqual(actions[0]["actions"][0]["payload"], "YAPLOQ2\r\nWindows voice\r\n%commandSource%\r\n%userId%\r\n%userName%\r\n%role%\r\n%isSubscribed%\r\n%isVip%\r\n%isModerator%\r\n%message%")
         self.assertTrue(all(action["actions"][0]["port"] == 6670 for action in actions))
         self.assertIn("VCONTROL\r\nclearall", [action["actions"][0]["payload"] for action in actions])
 
@@ -189,8 +191,14 @@ class IntegrationTests(unittest.TestCase):
         envelope = json.loads(gzip.decompress(base64.b64decode(encoded, validate=True)[4:]))
         self.assertEqual(
             envelope["data"]["actions"][0]["actions"][0]["payload"],
-            "VSPEAK\r\nrandom\r\n%message%\r\n%displayName%\r\n%userName%",
+            "YAPLOQ2\r\nrandom\r\n%commandSource%\r\n%userId%\r\n%userName%\r\n%role%\r\n%isSubscribed%\r\n%isVip%\r\n%isModerator%\r\n%message%",
         )
+
+    def test_streamerbot_export_can_use_assignments_without_explicit_voice(self):
+        encoded = export_actions(6670, '')
+        envelope = json.loads(gzip.decompress(base64.b64decode(encoded, validate=True)[4:]))
+        self.assertEqual(envelope['data']['actions'][0]['actions'][0]['payload'],
+                         'YAPLOQ2\r\n\r\n%commandSource%\r\n%userId%\r\n%userName%\r\n%role%\r\n%isSubscribed%\r\n%isVip%\r\n%isModerator%\r\n%message%')
 
     def test_extra_error_hook_runs_before_queue_session_finishes(self):
         self.settings.streamerbot_actions_enabled = True

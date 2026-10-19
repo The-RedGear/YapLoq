@@ -131,6 +131,8 @@ class Settings:
         self.profanity_rules = default_rules()
         self.user_voice_rules: dict[str, str] = {}
         self.role_voice_rules: dict[str, str] = {}
+        self.assignment_default_voice = ''
+        self.viewer_commands_enabled = False
         self.history_limit = 200
         self.minimize_to_tray = False
         self.max_message_age = 0.0
@@ -270,6 +272,8 @@ class Settings:
             self.profanity_rules = normalize_rules(data.get("profanity_rules"))
             self.user_voice_rules = {str(key).casefold(): str(value) for key, value in (data.get("user_voice_rules") or {}).items()}
             self.role_voice_rules = {str(key).casefold(): str(value) for key, value in (data.get("role_voice_rules") or {}).items()}
+            self.assignment_default_voice = str(data.get('assignment_default_voice') or '').strip()
+            self.viewer_commands_enabled = data.get('viewer_commands_enabled') is True
             self.history_limit = max(1, min(100000, int(data.get("history_limit", self.history_limit))))
             self.minimize_to_tray = bool(data.get("minimize_to_tray", self.minimize_to_tray))
             for key, upper in (("max_message_age", 86400), ("duplicate_window", 3600),
@@ -426,6 +430,8 @@ class Settings:
                 "profanity_rules": self.profanity_rules,
                 "user_voice_rules": self.user_voice_rules,
                 "role_voice_rules": self.role_voice_rules,
+                "assignment_default_voice": self.assignment_default_voice,
+                'viewer_commands_enabled': self.viewer_commands_enabled,
                 "history_limit": self.history_limit,
                 "minimize_to_tray": self.minimize_to_tray,
                 "aliases": {name: alias.to_dict() for name, alias in self.aliases.items()},

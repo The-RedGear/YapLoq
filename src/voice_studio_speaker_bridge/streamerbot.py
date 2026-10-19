@@ -189,6 +189,11 @@ class StreamerBotActions:
             "ttsEngine": str(data.get('engineName', '')),
             "ttsError": str(data.get('error', data.get('message', ''))),
             "ttsIntegration": str(data.get('integration', '')),
+            "ttsPlatform": str(data.get('platform', '')),
+            "ttsUserId": str(data.get('userId', '')),
+            "ttsPublicVoice": str(data.get('publicVoice', '')),
+            "ttsReply": str(data.get('reply', '')),
+            "ttsReason": str(data.get('reason', '')),
         }
 
     def _actions_enabled(self):
@@ -210,7 +215,9 @@ class StreamerBotActions:
         rule = validate_rules([rule])[0]
         data = dict(alias=arguments.get('ttsAlias'), source=arguments.get('ttsSource'), user=arguments.get('ttsUser'),
                     voiceName=arguments.get('ttsVoice'), engineName=arguments.get('ttsEngine'),
-                    id=arguments.get('ttsId'), text=arguments.get('ttsText'), integration=arguments.get('ttsIntegration'))
+                    id=arguments.get('ttsId'), text=arguments.get('ttsText'), integration=arguments.get('ttsIntegration'),
+                    platform=arguments.get('ttsPlatform'), userId=arguments.get('ttsUserId'),
+                    reason=arguments.get('ttsReason'), publicVoice=arguments.get('ttsPublicVoice'))
         if not matches_conditions(rule, data):
             return
         for step in rule['steps']:

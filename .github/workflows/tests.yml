@@ -30,3 +30,9 @@ jobs:
       - name: Verify automation workspace
         shell: powershell
         run: powershell.exe -STA -NoProfile -ExecutionPolicy Bypass -File tests/test_automations_ui.ps1
+      - name: Verify viewer assignments
+        shell: powershell
+        run: powershell.exe -STA -NoProfile -ExecutionPolicy Bypass -File tests/test_viewers_ui.ps1
+      - name: Verify global Save and pending drafts
+        shell: powershell
+        run: powershell.exe -STA -NoProfile -ExecutionPolicy Bypass -File tests/test_global_save_ui.ps1

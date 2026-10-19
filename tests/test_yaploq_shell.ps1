@@ -97,9 +97,9 @@ if ($VoicesNav.Parent) { throw 'Legacy navigation is still in the visible shell'
 if ($PlaylistGrid.Parent.Parent.Parent.Parent -eq $RulesPage.Content) { throw 'Playlist editor still belongs to message rules' }
 if (-not $script:yaploqPages.playlists.Content.Children.Count) { throw 'Playlist editor was lost' }
 foreach($name in @('AutoVoiceRulesExpander','RoutingExpander')){
-    if($window.FindName($name).Parent.Parent -ne $script:yaploqPages.routing.Content){throw 'Voice selection and routing must live under Voices > Routing'}
+    if($window.FindName($name).Parent.Parent -ne $script:assignmentSections.Rules.Content){throw 'Existing rules must live inside Assignments'}
 }
-if($script:routeOwners.routing -ne 'Voices' -or -not @($script:ownerSections.Voices | Where-Object {$_[1] -eq 'routing'}).Count){throw 'Routing tab missing from Voices'}
+if(-not @($script:ownerSections.Voices|Where-Object{$_[1] -eq 'assignments'}).Count -or @($script:ownerSections.Voices|Where-Object{$_[1] -in @('routing','viewers')}).Count){throw 'Assignments must replace the separate Routing and Viewers tabs'}
 if($window.FindName('RoutingExpander').Header.Children[0].Tag -ne 'mdi:call-split'){throw 'Routing icon was not replaced'}
 foreach($name in @('MessageModerationExpander','LimitsViewersExpander')){
     if($window.FindName($name).Parent.Parent -ne $RulesPage.Content){throw 'Filters and queue limits must remain in Queue rules'}
@@ -351,7 +351,7 @@ Set-Page 'history'; Open-YapLoqRoute 'owner:Voices'; Open-YapLoqRoute 'owner:Que
 $window.Dispatcher.Invoke([Action]{},[Windows.Threading.DispatcherPriority]::ContextIdle)
 if ($script:activePage -ne 'queue') { throw 'Unified Queue view was not restored' }
 Set-Page 'voiceRules'
-if ($script:activePage -ne 'routing') { throw 'Legacy voice rule shortcut did not open voice routing' }
+if ($script:activePage -ne 'assignments' -or $script:assignmentSection -ne 'Rules') { throw 'Legacy voice rule shortcut did not open Assignments rules' }
 Set-Page 'services'
 $picker=$script:servicePicker
 for ($cycle=0;$cycle -lt 12;$cycle++) {
@@ -380,5 +380,65 @@ if (Test-Path -LiteralPath (Join-Path $configDir 'ui-errors.log')) { throw 'Navi
 $previous=$script:activePage
 Set-Page 'unknown-test-route'
 if ($script:activePage -ne $previous -or -not(Test-Path -LiteralPath (Join-Path $configDir 'ui-errors.log'))) { throw 'Failed navigation did not preserve the current page and log details' }
+Set-Page 'playground'
+$script:recentHistoryItems=@(1..30|ForEach-Object{[pscustomobject]@{Id=('large-preview-'+$_);Alias='Mint voice';Text=('Recent speech '+$_);Status='Finished';HasAudio=$true}})
+$script:lastPlaybackState=[pscustomobject]@{queue=@()}
+$window.Width=1800;$window.Height=1100;$window.Show();$window.UpdateLayout()
+$window.Dispatcher.Invoke([Action]{},[Windows.Threading.DispatcherPriority]::ContextIdle)
+Update-DashboardPreviewSpace;Update-YapLoqDashboard $script:lastPlaybackState
+if($script:dashboardUpcoming.Children.Count -le 10){throw 'Large Dashboard is still capped at ten recent speech entries'}
+$largeCount=$script:dashboardUpcoming.Children.Count
+$window.Width=1180;$window.Height=760;$window.UpdateLayout()
+$window.Dispatcher.Invoke([Action]{},[Windows.Threading.DispatcherPriority]::ContextIdle)
+Update-DashboardPreviewSpace;Update-YapLoqDashboard $script:lastPlaybackState
+if($script:dashboardUpcoming.Children.Count -ge $largeCount){throw 'Dashboard preview did not shrink with the window'}
+$batchStamp='2026-10-18T20:00:00Z'
+$batchRows=@([pscustomobject]@{Id='second';Timestamp=$batchStamp;SegmentIndex=1},[pscustomobject]@{Id='first';Timestamp=$batchStamp;SegmentIndex=0})
+if(((Sort-YapLoqSpeechRows $batchRows).Id -join ',') -ne 'second,first'){throw 'Multi-voice rows must be newest first, including saved timestamp ties'}
+$mixed=@([pscustomobject]@{Id='old';Timestamp='2026-10-18T19:00:00Z';Status='Playing'},[pscustomobject]@{Id='new';Timestamp='2026-10-18T21:00:00Z';Status='Finished'})
+if(((Sort-YapLoqSpeechRows $mixed).Id -join ',') -ne 'new,old'){throw 'Playback status overrode chronology'}
+$mixed[0].Status='Finished';$mixed[1].Status='Playing'
+if(((Sort-YapLoqSpeechRows $mixed).Id -join ',') -ne 'new,old'){throw 'Status transition changed chronology'}
+$script:queueManualMoves=@();$script:unifiedQueueGrid.ItemsSource=$null;$script:unifiedQueueSignature=$null
+$QueueGrid.ItemsSource=@()
+$newHistory=New-QueueSpeechRow ([pscustomobject]@{id='chron-new';timestamp='2026-10-18T21:00:00Z';alias='Mint voice';text='Newest';status='Finished'})
+$oldHistory=New-QueueSpeechRow ([pscustomobject]@{id='chron-old';timestamp='2026-10-18T19:00:00Z';alias='Mint voice';text='Older';status='Finished'})
+$HistoryGrid.ItemsSource=@($newHistory);Update-YapLoqUnifiedQueue
+$HistoryGrid.ItemsSource=@($oldHistory,$newHistory);Update-YapLoqUnifiedQueue
+if(($script:unifiedQueueGrid.ItemsSource.Id -join ',') -ne 'chron-new,chron-old'){throw 'Late history snapshot promoted an older recording'}
+$newHistory.Status='Playing';Update-YapLoqUnifiedQueue
+if(($script:unifiedQueueGrid.ItemsSource.Id -join ',') -ne 'chron-new,chron-old'){throw 'Playing status reordered Queue'}
+$script:queueSpeechSearch.Text='Older'
+if(($script:unifiedQueueGrid.Items.Id -join ',') -ne 'chron-old'){throw 'Queue text search failed'}
+$script:queueSpeechSearch.Text='';$script:queueSpeechStatus.SelectedItem='Finished'
+if(($script:unifiedQueueGrid.Items.Id -join ',') -ne 'chron-old'){throw 'Queue status filter failed'}
+$script:queueSpeechStatus.SelectedItem='All speech'
+if(($script:unifiedQueueGrid.Items.Id -join ',') -ne 'chron-new,chron-old'){throw 'Clearing filters changed newest-first order'}
+$detailFixture=[pscustomobject]@{Alias='Mint voice';Status='Error';Time='Today';Source='Test';User='Viewer';Text='Full untruncated message';Error='Provider fixture failure'}
+$detailDialog=New-QueueMessageDetails $detailFixture
+if($detailDialog.Content.Child.Children[1].Text -ne $detailFixture.Text -or $detailDialog.Content.Child.Children[2].Text -notlike '*Provider fixture failure*'){throw 'Message details lost text or failure reason'}
+$detailDialog.Close()
+$script:recentHistoryItems=@($newHistory,$oldHistory);Update-YapLoqDashboard ([pscustomobject]@{queue=@()})
+$finishedRow=@($script:dashboardUpcoming.Children|Where-Object {$_.Tag.Id -eq 'chron-old'})[0]
+if($finishedRow.Children[2].Text){throw 'Dashboard still labels completed speech Finished'}
+$script:recentHistoryItems=@(1..500|ForEach-Object{[pscustomobject]@{Id=('bounded-'+$_);Timestamp=([datetimeoffset]::UtcNow.AddSeconds(-$_).ToString('o'));Alias='Mint voice';Text=('Speech '+$_);Status='Finished';HasAudio=$false}})
+$script:dashboardPreviewLimit=12;$script:appearanceCalls=0
+$script:originalAppearance=(Get-Item Function:\Add-SpeechRowAppearance).ScriptBlock
+function Add-SpeechRowAppearance($row){$script:appearanceCalls++;& $script:originalAppearance $row}
+Update-YapLoqDashboard ([pscustomobject]@{queue=@()})
+if($script:appearanceCalls -gt 12){throw 'Dashboard hydrated offscreen history rows'}
+$script:appearanceCalls=0
+Update-YapLoqDashboard ([pscustomobject]@{queue=@()})
+if($script:appearanceCalls -ne 0){throw 'Unchanged Dashboard poll repeated row styling'}
+Set-Item Function:\Add-SpeechRowAppearance $script:originalAppearance
+$voiceDraft=[pscustomobject]@{Id='change-fixture';Alias='Mint voice';Status='Queued';Text='Waiting fixture';Time='Today';Source='Test';User='';Error='';RowKind='Live'}
+$voiceDialog=New-QueuedVoiceDialog $voiceDraft
+$voicePicker=$voiceDialog.Content.Child.Children[2]
+if(-not $voicePicker.ItemTemplate -or $voicePicker.SelectedItem -ne 'Mint voice'){throw 'Queued voice picker lost alias appearance or current selection'}
+$voiceDialog.Close()
+$script:unifiedQueueGrid.ItemsSource=@($voiceDraft);$script:unifiedQueueGrid.SelectedItem=$voiceDraft;Sync-YapLoqQueueSelection
+if(-not $script:queueChangeVoiceButton.IsEnabled){throw 'Queued message voice change is unavailable'}
+$voiceDraft.Status='Generating';Sync-YapLoqQueueSelection
+if($script:queueChangeVoiceButton.IsEnabled){throw 'Generating message allows voice changes'}
 $window.Close()
 'YapLoq shell passed: six routes, unified rules, Dashboard state, 14 views at two sizes, 132 provider selections, repeated sidebar/hover events, direct service back navigation and failed-route recovery.'

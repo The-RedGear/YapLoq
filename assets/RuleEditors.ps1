@@ -140,6 +140,7 @@ function Install-ProfanityEditor {
     $panel.FindName('All').Add_Click({foreach($r in $script:profanityGrid.ItemsSource){$r.Enabled=$true};$script:profanityGrid.Items.Refresh()})
     $panel.FindName('None').Add_Click({foreach($r in $script:profanityGrid.ItemsSource){$r.Enabled=$false};$script:profanityGrid.Items.Refresh()})
     $panel.FindName('SaveProfanity').Style=$window.FindResource('PrimaryButton')
+    $script:profanitySaveButton=$panel.FindName('SaveProfanity')
     $panel.FindName('SaveProfanity').Add_Click({
         try {
             $s=Read-Settings

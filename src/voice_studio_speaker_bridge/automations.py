@@ -22,13 +22,17 @@ EVENT_LABELS = dict(received='Message received', generating='Generation started'
                     queueadded='Message added to queue', engineprocessed='Audio generated', playing='Playback started',
                     finished='Message finished', cancelled='Message cancelled or skipped', deleted='Message deleted',
                     error='Message failed', startedspeaking='Speech session started', stoppedspeaking='Speech session stopped',
-                    profileactivated='Profile activated')
+                    profileactivated='Profile activated', voicechanged='Queued voice changed')
 CATALOG = [dict(source=source, event=event, label=EVENT_LABELS.get(event, event))
            for source, events in SpeakerBotProtocol.EVENTS.items() for event in events
            if source == 'texttospeech' and event != 'deleted']
 CATALOG.append(dict(source='integration', event='error', label='OBS integration failed'))
+CATALOG += [dict(source='viewer', event=event, label=label) for event, label in (
+    ('commandreceived', 'Viewer voice command received'), ('voiceassigned', 'Viewer voice set successfully'),
+    ('voicereset', 'Viewer voice reset successfully'), ('voiceslisted', 'Viewer requested available voices'),
+    ('commandfailed', 'Viewer voice command failed'))]
 CATALOG += [dict(source='legacy', event=value[1], label=value[0]) for value in LEGACY.values()]
-FIELDS = ('alias', 'source', 'user', 'voiceName', 'engineName', 'id', 'text', 'integration')
+FIELDS = ('alias', 'source', 'user', 'voiceName', 'engineName', 'id', 'text', 'integration', 'platform', 'userId', 'reason', 'publicVoice')
 
 
 def effective_rules(settings):

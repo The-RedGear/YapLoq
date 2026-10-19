@@ -336,6 +336,7 @@ function Ensure-SettingsFile {
     } | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $configPath -Encoding UTF8
 }
 function Read-Settings {
+    if($script:globalSaveStaging){return ($script:globalSaveDraft|ConvertTo-Json -Depth 40|ConvertFrom-Json)}
     Ensure-SettingsFile
     try {
         $value=Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
@@ -357,6 +358,7 @@ function Read-Settings {
     }
 }
 function Write-Settings($value) {
+    if($script:globalSaveStaging){$script:globalSaveDraft=$value;$script:globalStageWrites++;return}
     Ensure-SettingsFile
     Set-PreviewSettings $value
     $temporary = $configPath + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
@@ -1437,7 +1439,10 @@ function Set-Page([string]$page) {
         if($script:activePage -eq 'queue'){Show-YapLoqQueueHistory;return}
         $script:queueFocusHistory=$true;$page='queue'
     }
-    if ($script:yaploqNav -and $page -eq 'voiceRules') { $page = 'routing' }
+    if ($script:yaploqNav -and $page -in @('voiceRules','routing','viewers')) {
+        Show-AssignmentSection $(if($page -eq 'viewers'){'Viewers'}else{'Rules'})
+        $page='assignments'
+    }
     if ($script:activePage -eq $page) { return }
     if ($script:yaploqNav -and $script:changingPage) { Request-YapLoqPage $page; return }
     $previousPage = $script:activePage
@@ -1449,7 +1454,7 @@ function Set-Page([string]$page) {
     }
     if ($script:yaploqPages) { foreach ($key in $script:yaploqPages.Keys) { $pages[$key] = $script:yaploqPages[$key] } }
     if (-not $pages.ContainsKey($page) -or -not $pages[$page]) { throw "Unknown page: $page" }
-    $SavePageButton.Visibility=if($page -in @('settings','rules','pronunciation','streamerbot','voicestudio','polly','elevenlabs','azure','google','watson','uberduck','ttsmonster','acapela','cereproc')){'Visible'}else{'Collapsed'}
+    $SavePageButton.Visibility=if(-not $script:globalSaveInstalled -and $page -in @('settings','rules','pronunciation','streamerbot','voicestudio','polly','elevenlabs','azure','google','watson','uberduck','ttsmonster','acapela','cereproc')){'Visible'}else{'Collapsed'}
     $SavePageButton.Tag=$page
     $script:activePage = $page
     foreach ($key in $pages.Keys) { $pages[$key].Visibility = if ($key -eq $page) {'Visible'} else {'Collapsed'} }
@@ -1469,6 +1474,7 @@ function Set-Page([string]$page) {
     if ($titles.ContainsKey($page)) { $PageTitle.Text = $titles[$page][0]; $PageSubtitle.Text = $titles[$page][1] }
     if ($script:yaploqNav) { Update-YapLoqNavigation $page }
     if ($page -eq 'streamActions') { Start-AutomationLoad }
+    if ($page -eq 'assignments') { Start-ViewerLoad }
     if ($page -eq 'activity') { Refresh-Activity }
     if ($page -in @('queue','history')) { $script:playerStateNext = 0; $script:playerHistoryNext = 0 }
     Animate-PageHeading
@@ -1540,6 +1546,8 @@ function Set-JsonProperty($object, [string]$name, $value) {
 }
 
 function Refresh-Grid([switch]$VoicesOnly) {
+    $pending=if(Get-Command Get-GlobalPendingSnapshots -ErrorAction SilentlyContinue){@(Get-GlobalPendingSnapshots)}else{@()}
+    try{
     $selectedAliasName=if($AliasGrid.SelectedItem){[string]$AliasGrid.SelectedItem.Name}else{''}
     $selectedEngine=[string]$AliasProviderFilter.SelectedItem
     $selectedPlayVoice=[string]$PlayVoiceList.SelectedItem
@@ -1576,6 +1584,8 @@ function Refresh-Grid([switch]$VoicesOnly) {
     }
     # Separate collection view: searching Voices must not filter the Dashboard picker.
     $PlayVoiceList.Tag = @($rows | ForEach-Object { $_ })
+    if(Get-Command Update-AliasChoiceAppearance -ErrorAction SilentlyContinue){Update-AliasChoiceAppearance}
+    if(Get-Command Update-AssignmentDefaultChoices -ErrorAction SilentlyContinue){Update-AssignmentDefaultChoices}
     $AliasGrid.ItemsSource = $rows
     $AliasProviderFilter.Items.Clear()
     [void]$AliasProviderFilter.Items.Add('All engines')
@@ -1592,8 +1602,10 @@ function Refresh-Grid([switch]$VoicesOnly) {
     if ($PronunciationVoiceList.Items.Count -and $PronunciationVoiceList.SelectedIndex -lt 0) { $PronunciationVoiceList.SelectedIndex = 0 }
     $script:ExportRandomLabel='Random (enabled voices)'
     $playlistLabels = @(Get-PlaylistSpeakLabels $settings)
-    $voiceChoices = @($script:ExportRandomLabel) + @($playlistLabels) + @($rows.Name)
-    $RouteAliasBox.ItemsSource = @($playlistLabels) + @($rows.Name)
+    $voiceChoices = @('Use assignments',$script:ExportRandomLabel) + @($playlistLabels) + @($rows.Name)
+    $selectedRouteAlias=[string]$RouteAliasBox.SelectedItem
+    $RouteAliasBox.ItemsSource = @('Keep chosen voice (priority only)') + @($playlistLabels) + @($rows.Name)
+    if($selectedRouteAlias -and $RouteAliasBox.Items.Contains($selectedRouteAlias)){$RouteAliasBox.SelectedItem=$selectedRouteAlias}else{$RouteAliasBox.SelectedIndex=0}
     $VoiceRuleAliasBox.ItemsSource = @($playlistLabels) + @($rows.Name)
     $exportAlias=[string]$ExportVoiceAliasBox.SelectedItem
     $ExportVoiceAliasBox.ItemsSource=$voiceChoices
@@ -1738,9 +1750,14 @@ function Refresh-Grid([switch]$VoicesOnly) {
     $MinimizeToTrayCheck.IsChecked = $script:minimizeToTray
     $script:loadingSettings = $false
     if($script:credentialFields){Sync-YapLoqCredentialFields}
+    }finally{if($pending.Count){Restore-GlobalPendingSnapshots $pending}}
 }
 
 function Refresh-Voices {
+    if($script:globalSaveInstalled){
+        $group=@{voicestudio='VoiceStudio';polly='Polly';elevenlabs='ElevenLabs';azure='Azure';google='Google';watson='Watson';uberduck='UberDuck';ttsmonster='TTS.Monster';acapela='Acapela';cereproc='CereProc'}[$script:activePage]
+        if($group){Update-GlobalSaveGroup $group;if($script:globalSaveGroups[$group].Dirty){$BottomStatus.Text='Save '+$group+' changes before testing or loading voices.';return}}
+    }
     if ($script:voiceRefreshTask -and -not $script:voiceRefreshTask.IsCompleted) { return }
     $BottomStatus.Text = 'Loading voices...'
     $RefreshButton.IsEnabled = $false
@@ -2114,7 +2131,7 @@ function New-QueueSpeechRow($item, [bool]$Paused=$false) {
     try{if($item.timestamp){$time=([datetime]$item.timestamp).ToLocalTime().ToString('MM/dd HH:mm')}}catch{}
     $status=if($Paused -and $item.status -eq 'Playing'){'Paused'}elseif($item.status -in @('Waiting','Ready','Queued')){'Queued'}else{[string]$item.status}
     if($item.source -eq 'History recording' -and $status -eq 'Generating'){$status='Queued'}
-    $row=[pscustomobject]@{Id=$item.id;Timestamp=$item.timestamp;Status=$status;Alias=$item.alias;User=$item.user;Text=(Get-DisplayText $item.text);Time=$time;Source=$item.source;AudioPath=[string]$item.audioPath;AudioLabel=$(if($item.audioPath){'Ready'}else{'Pending'})}
+    $row=[pscustomobject]@{Id=$item.id;Timestamp=$item.timestamp;SegmentIndex=$item.segmentIndex;Status=$status;Error=[string]$item.error;Alias=$item.alias;User=$item.user;Platform=$item.platform;UserId=$item.userId;DisplayName=$item.displayName;Text=(Get-DisplayText $item.text);Time=$time;Source=$item.source;AudioPath=[string]$item.audioPath;AudioLabel=$(if($item.audioPath){'Ready'}else{'Pending'})}
     Add-SpeechRowAppearance $row
     return $row
 }
@@ -2356,7 +2373,7 @@ function Refresh-ServiceState($Snapshot = $null, [bool]$FromPoll = $false) {
     try {
         Update-NowPlayingBar $state $lastHistory
         if ($script:yaploqNav) { Update-YapLoqIntegrationStatus $state.integration }
-        if ($script:yaploqNav) { Update-YapLoqDashboard $state }
+        if ($script:yaploqNav -and $script:activePage -eq 'playground') { Update-YapLoqDashboard $state }
     } catch {
         try {
             if ($BottomStatus) { $BottomStatus.Text = 'Player UI: ' + $_.Exception.Message; $BottomStatus.Visibility = 'Visible' }
@@ -2381,7 +2398,7 @@ function Refresh-ServiceState($Snapshot = $null, [bool]$FromPoll = $false) {
         foreach ($item in @($state.queue)) {
             if($item){$queueRows.Add((New-QueueSpeechRow $item))}
         }
-        $queueSignature = ($queueRows | ForEach-Object { '{0}|{1}|{2}|{3}|{4}|{5}' -f $_.Id,$_.Status,$_.Text,$_.Accent,$_.AudioLabel,$_.IconGeometry }) -join ';'
+        $queueSignature = ($queueRows | ForEach-Object { '{0}|{1}|{2}|{3}|{4}|{5}|{6}' -f $_.Id,$_.Status,$_.Text,$_.Accent,$_.AudioLabel,$_.IconGeometry,$_.Alias }) -join ';'
         if ($queueSignature -ne $script:lastQueueSignature) {
             if ($QueueGrid) {
                 $QueueGrid.ItemsSource = $queueRows
@@ -2392,7 +2409,7 @@ function Refresh-ServiceState($Snapshot = $null, [bool]$FromPoll = $false) {
     } catch {}
 
     if($script:queueLiveHeading){$script:queueLiveHeading.Text='Live queue ('+$queueRows.Count+')'}
-    if($script:unifiedQueueGrid){Update-YapLoqUnifiedQueue}
+    if($script:unifiedQueueGrid -and $script:activePage -eq 'queue'){Update-YapLoqUnifiedQueue}
     if ($FromPoll -and $script:playerHistoryRenderedRevision -eq $script:playerHistoryRevision) { return }
     try {
         $selectedHistoryId = if ($HistoryGrid -and $HistoryGrid.SelectedItem) { [string]$HistoryGrid.SelectedItem.Id } else { '' }
@@ -2411,8 +2428,8 @@ function Refresh-ServiceState($Snapshot = $null, [bool]$FromPoll = $false) {
             try { if ($audioPath) { $cacheExists = Test-Path -LiteralPath $audioPath } } catch {}
             $audioLabel = if ($savedExists) { 'Saved' } elseif ($cacheExists) { 'Cached' } else { 'Unavailable' }
             $row = [pscustomobject]@{
-                Id=$item.id; Timestamp=$item.timestamp; Time=$time; Status=$item.status; Alias=$item.alias; Source=$item.source
-                User=$item.user; Text=(Get-DisplayText $item.text); AudioPath=$audioPath; SavedPath=$savedPath
+                Id=$item.id; Timestamp=$item.timestamp; SegmentIndex=$item.segmentIndex; Time=$time; Status=$item.status; Error=[string]$item.error; Alias=$item.alias; Source=$item.source
+                User=$item.user; Platform=$item.platform; UserId=$item.userId; DisplayName=$item.displayName; Text=(Get-DisplayText $item.text); AudioPath=$audioPath; SavedPath=$savedPath
                 AudioLabel=$audioLabel; HasAudio=($savedExists -or $cacheExists); DurationMs=$item.duration
             }
             Add-SpeechRowAppearance $row
@@ -2421,7 +2438,7 @@ function Refresh-ServiceState($Snapshot = $null, [bool]$FromPoll = $false) {
         }
         if ($script:lastPlayedRecording) { $script:lastHistorySpeechId = [string]$script:lastPlayedRecording.Id }
         elseif ($lastHistory) { $script:lastHistorySpeechId = [string]$lastHistory.Id } else { $script:lastHistorySpeechId = '' }
-        try { $script:recentHistoryItems = @($historyRows | Where-Object {$_.HasAudio} | Select-Object -First 10) } catch { $script:recentHistoryItems = @() }
+        try { $script:recentHistoryItems = @($historyRows) } catch { $script:recentHistoryItems = @() }
         if($script:queueHistoryHeading){$script:queueHistoryHeading.Text='Recent history ('+$historyRows.Count+') - not queued'}
         $historySignature = ($historyRows | ForEach-Object { '{0}|{1}|{2}|{3}' -f $_.Id,$_.Status,$_.AudioLabel,$_.SavedPath }) -join ';'
         if ($historySignature -ne $script:lastHistorySignature) {
@@ -2432,7 +2449,7 @@ function Refresh-ServiceState($Snapshot = $null, [bool]$FromPoll = $false) {
             $script:lastHistorySignature = $historySignature
         }
         Sync-HistoryAudioButton
-        if($script:unifiedQueueGrid){Update-YapLoqUnifiedQueue}
+        if($script:unifiedQueueGrid -and $script:activePage -eq 'queue'){Update-YapLoqUnifiedQueue}
         if ($FromPoll) { $script:playerHistoryRenderedRevision = $script:playerHistoryRevision }
         # Refresh bar again with real lastHistory (alias/line for idle state)
         try { Update-NowPlayingBar $state $lastHistory } catch {}
@@ -2579,8 +2596,9 @@ function Invoke-BridgePost([string]$path, $body = @{}) {
 function Speak-Text([string]$alias, [string]$text, [string]$source = 'Playground') {
     if (-not $alias -or -not $text.Trim()) { return }
     try {
-        Invoke-BridgePost '/speak' @{ voice = $alias; message = $text; source = $source } | Out-Null
-        $BottomStatus.Text = 'Speech queued for ' + $alias
+        $response=Invoke-BridgePost '/speak' @{ voice = $alias; message = $text; source = $source }
+        $count=@($response.result.segments).Count
+        $BottomStatus.Text = if($count -gt 1){'Queued '+$count+' voice segments'}else{'Speech queued for '+$alias}
     } catch { $BottomStatus.Text = $_.Exception.Message }
 }
 function Get-VoiceAccent([string]$color) {
@@ -2637,6 +2655,17 @@ function Set-VoiceFavorite([string]$name,[bool]$favorite) {
     Refresh-Grid -VoicesOnly
 }
 
+function Test-AliasPublicSettings([string]$name,[string]$publicName,[string]$audience,[string]$oldName){
+    $label=if($publicName.Trim()){$publicName.Trim()}else{$name.Trim()}
+    if($label.Length -gt 64 -or $label -match '[\x00-\x1F]' -or $label.StartsWith('!') -or $label.ToLowerInvariant() -in @('random','reset','list')){throw 'Choose a public name of up to 64 characters, not random, reset, list, or a command.'}
+    if($audience -notin @('everyone','subscribers','vips','moderators','broadcaster')){throw 'Choose who can select this voice.'}
+    foreach($property in (Read-Settings).aliases.PSObject.Properties){
+        if($property.Name -eq $oldName -or -not $property.Value.public){continue}
+        $other=if([string]$property.Value.public_name){[string]$property.Value.public_name}else{$property.Name}
+        if($other.Trim() -eq $label){throw 'Another public voice already uses that name.'}
+    }
+}
+
 function Save-Alias($oldName, $value) {
     $s = Read-Settings
     $folded = $value.Name.Trim().ToLowerInvariant()
@@ -2658,11 +2687,19 @@ function Save-Alias($oldName, $value) {
     $color=Get-VoiceAccent $color
     $enabled = if ($oldName -and $null -ne $s.aliases.$oldName.enabled) { [bool]$s.aliases.$oldName.enabled } else { $true }
     if ($null -ne $value.Enabled) { $enabled = [bool]$value.Enabled }
+    $public=if($oldName){$s.aliases.$oldName.public -eq $true}else{$false}
+    $publicName=if($oldName){[string]$s.aliases.$oldName.public_name}else{''}
+    $audience=if($oldName -and $s.aliases.$oldName.viewer_access){[string]$s.aliases.$oldName.viewer_access}else{'everyone'}
+    if($null -ne $value.Public){$public=[bool]$value.Public}
+    if($null -ne $value.PublicName){$publicName=[string]$value.PublicName}
+    if($null -ne $value.ViewerAccess){$audience=[string]$value.ViewerAccess}
+    if($public){try{Test-AliasPublicSettings $value.Name $publicName $audience $oldName}catch{$BottomStatus.Text=$_.Exception.Message;return}}
     if ($oldName -and $oldName -ne $value.Name) { $s.aliases.PSObject.Properties.Remove($oldName) }
     $alias = [pscustomobject]@{
         provider = $value.Provider; voice_id = $value.VoiceId; model = $value.Model; speed = [double]$value.Speed
         volume = [double]$value.Volume; language = [string]$value.Language; instruct = [string]$value.Instruct; group = [string]$value.Group
         output_device = [string]$value.OutputDevice; favorite = $favorite; enabled = $enabled; icon_id = $iconId; color=$color
+        public=$public;public_name=$publicName.Trim();viewer_access=$audience
     }
     Set-JsonProperty $s.aliases $value.Name $alias
     Write-Settings $s
@@ -2691,6 +2728,7 @@ function Save-VoiceToggles {
 function Get-ExportSpeakAlias {
     $selected = [string]$ExportVoiceAliasBox.SelectedItem
     if (-not $selected) { return '' }
+    if ($selected -eq 'Use assignments') { return '' }
     if ($selected -eq $script:ExportRandomLabel -or $selected -eq 'random') { return 'random' }
     if ($selected.StartsWith('Playlist: ',[StringComparison]::OrdinalIgnoreCase)) {
         return 'playlist:' + $selected.Substring(10).Trim()
@@ -2701,13 +2739,13 @@ function Get-ExportSpeakAlias {
 function Update-StreamerSpeakPayload {
     if (-not $StreamerPayloadBox -or -not $ExportVoiceAliasBox) { return }
     $alias = Get-ExportSpeakAlias
-    if (-not $alias) { $alias = 'Your voice alias' }
+    if (-not $alias -and [string]$ExportVoiceAliasBox.SelectedItem -ne 'Use assignments') { $alias = 'Your voice alias' }
     $StreamerPayloadBox.Text = "VSPEAK`r`n$alias`r`n%message%`r`n%displayName%`r`n%userName%"
 }
 function Export-StreamerBotActions {
     try {
         $alias = Get-ExportSpeakAlias
-        if (-not $alias) { throw 'Add a voice in Voices first, then choose it here.' }
+        if (-not $alias -and [string]$ExportVoiceAliasBox.SelectedItem -ne 'Use assignments') { throw 'Choose a voice or Use assignments.' }
         $saved = Read-Settings
         if (-not $saved.enable_udp) { throw 'Enable the UDP listener and save the connection settings first. Restart YapLoq if you just enabled it.' }
         if ([int]$UdpBox.Text -ne [int]$saved.udp_port) { throw 'Save the UDP port and restart YapLoq before exporting actions.' }
@@ -2804,6 +2842,11 @@ function Show-PlaylistDialog($existing) {
     foreach ($aliasName in $aliasNames) {
         $cb = [System.Windows.Controls.CheckBox]::new()
         $cb.Content = $aliasName
+        if(Get-Command New-AliasChoiceTemplate -ErrorAction SilentlyContinue){
+            $cb.ContentTemplate=New-AliasChoiceTemplate
+            $appearance=[YapLoqAliasChoiceConverter]::new().Convert($aliasName,[object],$null,[Globalization.CultureInfo]::InvariantCulture)
+            $cb.Style=Get-YapLoqDashboardAccentStyle ($window.FindResource([Windows.Controls.CheckBox])) ($appearance.AccentBrush.ToString())
+        }
         $cb.Margin = [System.Windows.Thickness]::new(0,0,0,8)
         $cb.IsChecked = [bool]$selected[$aliasName]
         [void]$checks.Children.Add($cb)
@@ -2987,6 +3030,13 @@ function Test-QueueControl {
         Refresh-ServiceState
     } catch { $BottomStatus.Text = $_.Exception.Message }
 }
+function Invoke-SavedServiceTest([string]$group,[string]$legacySave){
+    if($script:globalSaveInstalled){
+        Update-GlobalSaveGroup $group
+        if($script:globalSaveGroups[$group].Dirty){$BottomStatus.Text='Save '+$group+' changes before testing.';return}
+    }else{& $legacySave}
+    Refresh-Voices
+}
 function Save-VoiceStudioSettings {
     try {
         $s = Read-Settings
@@ -2996,7 +3046,7 @@ function Save-VoiceStudioSettings {
         Set-JsonProperty $s 'voicestudio_enabled' ([bool]$(if ($VoiceStudioEnabledCheck) { $VoiceStudioEnabledCheck.IsChecked } else { $true }))
         Write-Settings $s
         $BottomStatus.Text = 'VoiceStudio settings saved to data\settings.json'
-        try { Refresh-ServiceHealth $false | Out-Null } catch {}
+        if(-not $script:globalSaveStaging){try { Refresh-ServiceHealth $false | Out-Null } catch {}}
     } catch { $BottomStatus.Text = $_.Exception.Message }
 }
 
@@ -3225,6 +3275,14 @@ function Show-AliasDialog($existing) {
      <Button Name="BrowseVoiceIcons" Grid.Column="2" Content="Browse icons" Margin="10,0,0,0"/>
     </Grid>
     <TextBlock Name="AliasIconHint" Foreground="#B9B2C2" FontSize="11" Margin="0,0,0,16" Text="Paste collection:name from Icônes. New icons download once and are cached."/>
+    <Expander Header="Viewer access" Margin="0,0,0,16"><StackPanel Margin="0,8,0,0">
+     <CheckBox Name="AliasPublicCheck" Content="Allow viewers to choose this voice" Margin="0,0,0,10"/>
+     <StackPanel IsEnabled="{Binding IsChecked, ElementName=AliasPublicCheck}">
+      <TextBlock Text="Public name (optional)" Foreground="#B9B2C2"/><TextBox Name="AliasPublicName" Tag="Uses the alias name when blank" Margin="0,6,0,10"/>
+      <TextBlock Text="Who can choose it" Foreground="#B9B2C2"/><ComboBox Name="AliasViewerAccess" SelectedValuePath="Tag" SelectedIndex="0" Margin="0,6,0,6"><ComboBoxItem Content="Everyone" Tag="everyone"/><ComboBoxItem Content="Subscribers and moderators" Tag="subscribers"/><ComboBoxItem Content="VIPs and moderators" Tag="vips"/><ComboBoxItem Content="Moderators" Tag="moderators"/><ComboBoxItem Content="Broadcaster only" Tag="broadcaster"/></ComboBox>
+     </StackPanel>
+     <TextBlock Text="Viewers use !voice followed by the public name. The broadcaster can choose any public voice. Private voices remain available to your own actions." TextWrapping="Wrap" Foreground="#B9B2C2" Margin="0,6,0,0"/>
+    </StackPanel></Expander>
     <TextBlock Text="Voice provider and profile" Foreground="#B9B2C2"/><TextBox Name="ProfileSearchBox" Margin="0,7,0,8" ToolTip="Search by voice, language, or engine"/><Border Name="ProfileListHost" Height="200" Margin="0,0,0,17" Background="#1E1A27" BorderBrush="#50485C" BorderThickness="1" CornerRadius="8" ClipToBounds="False"><Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions><Border Grid.Row="0" Background="#9915131D" BorderBrush="#50485C" BorderThickness="0,0,0,1" Padding="14,8,14,7"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="1.25*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="0.95*"/></Grid.ColumnDefinitions><TextBlock Text="VOICE" Foreground="#B9B2C2" FontSize="10" FontWeight="Bold"/><TextBlock Grid.Column="1" Text="LANGUAGE" Foreground="#B9B2C2" FontSize="10" FontWeight="Bold"/><TextBlock Grid.Column="2" Text="ENGINE" Foreground="#B9B2C2" FontSize="10" FontWeight="Bold"/></Grid></Border><ListBox Name="ProfileBox" Grid.Row="1" Background="Transparent" BorderThickness="0" Padding="4" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Auto"><ListBox.ItemTemplate><DataTemplate><Grid Margin="2,0"><Grid.ColumnDefinitions><ColumnDefinition Width="1.25*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="0.95*"/></Grid.ColumnDefinitions><TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/><TextBlock Grid.Column="1" Text="{Binding Language}" Opacity="0.72" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/><TextBlock Grid.Column="2" Text="{Binding Engine}" Opacity="0.72" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/></Grid></DataTemplate></ListBox.ItemTemplate></ListBox></Grid></Border>
     <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="16"/><ColumnDefinition/></Grid.ColumnDefinitions><StackPanel><TextBlock Text="Engine model" Foreground="#B9B2C2"/><ComboBox Name="ModelBox" Margin="0,7,0,0"/></StackPanel><StackPanel Grid.Column="2"><TextBlock Text="Speed" Foreground="#B9B2C2"/><Slider Name="SpeedBox" Minimum="0.5" Maximum="2" TickFrequency="0.05" IsSnapToTickEnabled="True" Value="1" Margin="0,7,0,0" AutomationProperties.Name="Alias speed"/><TextBlock Text="{Binding ElementName=SpeedBox,Path=Value,StringFormat={}{0:0.00}x}"/></StackPanel></Grid>
     <Grid Margin="0,14,0,0"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="16"/><ColumnDefinition/></Grid.ColumnDefinitions><StackPanel><TextBlock Text="Group (optional)" Foreground="#B9B2C2"/><TextBox Name="GroupBox" Margin="0,7,0,0"/></StackPanel><StackPanel Grid.Column="2"><TextBlock Text="Volume" Foreground="#B9B2C2"/><Slider Name="VolumeBox" Minimum="0" Maximum="2" TickFrequency="0.05" IsSnapToTickEnabled="True" Value="1" Margin="0,7,0,0" AutomationProperties.Name="Alias volume"/><TextBlock Text="{Binding ElementName=VolumeBox,Path=Value,StringFormat={}{0:P0}}"/></StackPanel></Grid>
@@ -3243,6 +3301,11 @@ function Show-AliasDialog($existing) {
     $d.MaxHeight = [Windows.SystemParameters]::WorkArea.Height - 30
     $n=$d.FindName('NameBox');$p=$d.FindName('ProfileBox');$m=$d.FindName('ModelBox');$sp=$d.FindName('SpeedBox');$g=$d.FindName('GroupBox');$vol=$d.FindName('VolumeBox');$lang=$d.FindName('LanguageBox');$style=$d.FindName('StyleBox')
     $profileSearch=$d.FindName('ProfileSearchBox');$aliasOutput=$d.FindName('AliasOutputBox');$aliasValidation=$d.FindName('AliasValidationText')
+    if($savedAppearance){
+        $d.FindName('AliasPublicCheck').IsChecked=$savedAppearance.Value.public -eq $true
+        $d.FindName('AliasPublicName').Text=[string]$savedAppearance.Value.public_name
+        $d.FindName('AliasViewerAccess').SelectedValue=if($savedAppearance.Value.viewer_access){[string]$savedAppearance.Value.viewer_access}else{'everyone'}
+    }
     $iconBox=$d.FindName('AliasIconId');$iconPreview=$d.FindName('AliasIconPreview');$iconHint=$d.FindName('AliasIconHint')
     $nameField=$d.FindName('NameBox');$editorPanel=$nameField.Parent
     $favoriteField=$d.FindName('AliasFavoriteCheck')
@@ -3339,6 +3402,7 @@ function Show-AliasDialog($existing) {
         try {
             if (-not $n.Text.Trim() -or -not $p.SelectedItem) { throw 'Enter a name and choose a voice.' }
             if (-not $m.SelectedItem) { throw 'Choose an engine model.' }
+            if($d.FindName('AliasPublicCheck').IsChecked){Test-AliasPublicSettings $n.Text $d.FindName('AliasPublicName').Text ([string]$d.FindName('AliasViewerAccess').SelectedValue) $(if($existing){$existing.Name}else{''})}
             $speed=[double]$sp.Value;$volume=[double]$vol.Value
             if ($speed -lt 0.5 -or $speed -gt 2 -or $volume -lt 0 -or $volume -gt 2) { throw 'Speed must be 0.5 to 2; volume must be 0 to 2.' }
             $key = if ($p.SelectedItem.PSObject.Properties['Key']) { [string]$p.SelectedItem.Key } else { ([regex]::Match([string]$p.SelectedItem,'\[([^\]]+)\]$')).Groups[1].Value };$parts=$key.Split('|',2)
@@ -3346,6 +3410,9 @@ function Show-AliasDialog($existing) {
             $script:dialogResult | Add-Member -NotePropertyName Favorite -NotePropertyValue ([bool]$d.FindName('AliasFavoriteCheck').IsChecked) -Force
             $script:dialogResult | Add-Member -NotePropertyName IconId -NotePropertyValue ((Resolve-VoiceIcon $iconBox.Text).Id) -Force
             $script:dialogResult | Add-Member -NotePropertyName Color -NotePropertyValue ([string]$paletteRow.Tag) -Force
+            $script:dialogResult | Add-Member NoteProperty Public ([bool]$d.FindName('AliasPublicCheck').IsChecked) -Force
+            $script:dialogResult | Add-Member NoteProperty PublicName ($d.FindName('AliasPublicName').Text.Trim()) -Force
+            $script:dialogResult | Add-Member NoteProperty ViewerAccess ([string]$d.FindName('AliasViewerAccess').SelectedValue) -Force
             $d.DialogResult=$true
         } catch { $aliasValidation.Text=$_.Exception.Message }
     })
@@ -3402,6 +3469,7 @@ function Show-PronunciationDialog($existing) {
 </Window>
 '@
     $d=[Windows.Markup.XamlReader]::Load([System.Xml.XmlNodeReader]::new($entryXaml));$d.Owner=$window;Apply-AppFont $d
+    if(Get-Command Set-AliasChoicePicker -ErrorAction SilentlyContinue){Set-AliasChoicePicker ($d.FindName('AliasList'))}
     $written=$d.FindName('WrittenBox');$spoken=$d.FindName('SpokenBox');$hideWritten=$d.FindName('HideWrittenCheck');$aliases=$d.FindName('AliasList');$previewStatus=$d.FindName('PreviewStatus');foreach($item in @($PlayVoiceList.Items)){[void]$aliases.Items.Add([string]$item)};if($aliases.Items.Count){$aliases.SelectedIndex=0};if($existing){$written.Text=[string]$existing.Written;$spoken.Text=[string]$existing.Spoken;$hideWritten.IsChecked=[bool]$existing.Hidden;$d.FindName('WindowTitle').Text='Edit pronunciation'}
     $script:pronunciationResult=$null;$d.FindName('TitleBar').Add_MouseLeftButtonDown({$d.DragMove()});$d.FindName('Close').Add_Click({$d.Close()});$d.FindName('Cancel').Add_Click({$d.Close()});$d.FindName('Test').Add_Click({$alias=[string]$aliases.SelectedItem;$choice=Get-RandomPronunciation $spoken.Text;if(-not$choice){$previewStatus.Text='Enter at least one spoken pronunciation first.'}elseif(-not$alias){$previewStatus.Text='Choose an alias first.'}else{try{Invoke-BridgePost '/speak' @{voice=$alias;message=$choice;source='Pronunciation preview'}|Out-Null;$previewStatus.Text='Previewing "'+$choice+'" with '+$alias}catch{$previewStatus.Text=$_.Exception.Message}}});$saveAction={if($written.Text.Trim() -and (Get-RandomPronunciation $spoken.Text)){$isHidden=[bool]$hideWritten.IsChecked;$display=if($isHidden){'*' * [Math]::Max(4,$written.Text.Trim().Length)}else{$written.Text.Trim()};$script:pronunciationResult=[pscustomobject]@{Written=$written.Text.Trim();DisplayWritten=$display;Spoken=$spoken.Text.Trim();Hidden=$isHidden};$d.DialogResult=$true}};$d.FindName('Save').Add_Click($saveAction);$d.Add_KeyDown({if($_.Key -eq 'Escape'){$d.Close()}});$d.Add_ContentRendered({$written.Focus();$written.SelectAll()});[void]$d.ShowDialog();return $script:pronunciationResult
 }
@@ -3751,33 +3819,33 @@ $TestStreamerBotQueueAddedButton.Add_Click({ try { Invoke-BridgePost '/api/integ
 $TestStreamerBotPlayingButton.Add_Click({ try { Invoke-BridgePost '/api/integrations/streamerbot/test' @{ state='playing' } | Out-Null } catch { $BottomStatus.Text = $_.Exception.Message } })
 $TestStreamerBotFinishedButton.Add_Click({ try { Invoke-BridgePost '/api/integrations/streamerbot/test' @{ state='finished' } | Out-Null } catch { $BottomStatus.Text = $_.Exception.Message } })
 $SaveVoiceStudioButton.Add_Click({ Save-VoiceStudioSettings })
-$TestVoiceStudioButton.Add_Click({ Save-VoiceStudioSettings; Refresh-Voices })
+$TestVoiceStudioButton.Add_Click({ Invoke-SavedServiceTest 'VoiceStudio' 'Save-VoiceStudioSettings' })
 $SavePollyButton.Add_Click({ Save-PollySettings })
 $SaveElevenLabsButton.Add_Click({ Save-ElevenLabsSettings })
-$TestElevenLabsButton.Add_Click({ Save-ElevenLabsSettings; Refresh-Voices })
+$TestElevenLabsButton.Add_Click({ Invoke-SavedServiceTest 'ElevenLabs' 'Save-ElevenLabsSettings' })
 $ClearElevenLabsButton.Add_Click({ Clear-ElevenLabsSecrets })
 $SaveAzureButton.Add_Click({ Save-AzureSettings })
-$TestAzureButton.Add_Click({ Save-AzureSettings; Refresh-Voices })
+$TestAzureButton.Add_Click({ Invoke-SavedServiceTest 'Azure' 'Save-AzureSettings' })
 $ClearAzureButton.Add_Click({ Clear-AzureSecrets })
 $SaveGoogleButton.Add_Click({ Save-GoogleSettings })
-$TestGoogleButton.Add_Click({ Save-GoogleSettings; Refresh-Voices })
+$TestGoogleButton.Add_Click({ Invoke-SavedServiceTest 'Google' 'Save-GoogleSettings' })
 $ClearGoogleButton.Add_Click({ Clear-GoogleSecrets })
 $SaveWatsonButton.Add_Click({ Save-WatsonSettings })
-$TestWatsonButton.Add_Click({ Save-WatsonSettings; Refresh-Voices })
+$TestWatsonButton.Add_Click({ Invoke-SavedServiceTest 'Watson' 'Save-WatsonSettings' })
 $ClearWatsonButton.Add_Click({ Clear-WatsonSecrets })
 $SaveUberDuckButton.Add_Click({ Save-UberDuckSettings })
-$TestUberDuckButton.Add_Click({ Save-UberDuckSettings; Refresh-Voices })
+$TestUberDuckButton.Add_Click({ Invoke-SavedServiceTest 'UberDuck' 'Save-UberDuckSettings' })
 $ClearUberDuckButton.Add_Click({ Clear-UberDuckSecrets })
 $SaveTtsMonsterButton.Add_Click({ Save-TtsMonsterSettings })
-$TestTtsMonsterButton.Add_Click({ Save-TtsMonsterSettings; Refresh-Voices })
+$TestTtsMonsterButton.Add_Click({ Invoke-SavedServiceTest 'TTS.Monster' 'Save-TtsMonsterSettings' })
 $ClearTtsMonsterButton.Add_Click({ Clear-TtsMonsterSecrets })
 $SaveAcapelaButton.Add_Click({ Save-AcapelaSettings })
-$TestAcapelaButton.Add_Click({ Save-AcapelaSettings; Refresh-Voices })
+$TestAcapelaButton.Add_Click({ Invoke-SavedServiceTest 'Acapela' 'Save-AcapelaSettings' })
 $ClearAcapelaButton.Add_Click({ Clear-AcapelaSecrets })
 $SaveCereProcButton.Add_Click({ Save-CereProcSettings })
-$TestCereProcButton.Add_Click({ Save-CereProcSettings; Refresh-Voices })
+$TestCereProcButton.Add_Click({ Invoke-SavedServiceTest 'CereProc' 'Save-CereProcSettings' })
 $ClearCereProcButton.Add_Click({ Clear-CereProcSecrets })
-$TestPollyButton.Add_Click({ Save-PollySettings; Refresh-Voices })
+$TestPollyButton.Add_Click({ Invoke-SavedServiceTest 'Polly' 'Save-PollySettings' })
 $ClearPollyCredentialsButton.Add_Click({
     try {
         $s = Read-Settings
@@ -3803,7 +3871,7 @@ $ExportVoiceAliasBox.Add_SelectionChanged({ Update-StreamerSpeakPayload })
 $ExportStreamerBotButton.Add_Click({ Export-StreamerBotActions })
 $window.FindName('SaveStreamerConnectionButton').Add_Click({ Save-StreamerBotSettings })
 $TestConnectionButton.Add_Click({ Refresh-Voices })
-$SaveButton.Add_Click({
+function Save-AppSettings {
     try {
         $http = [int]$HttpBox.Text
         if ($http -lt 1 -or $http -gt 65535) { throw 'HTTP port must be between 1 and 65535' }
@@ -3841,16 +3909,19 @@ $SaveButton.Add_Click({
         Sync-TrayIconMode
         $BottomStatus.Text = 'Settings saved to data\settings.json. Restart after changing the HTTP port.'
     } catch { $BottomStatus.Text = $_.Exception.Message }
-})
+}
+$SaveButton.Add_Click({Save-AppSettings})
 $MinimizeToTrayCheck.Add_Checked({
     if ($script:loadingSettings) { return }
     $script:minimizeToTray = $true
+    if($script:globalSaveInstalled){Sync-TrayIconMode;return}
     try { $s = Read-Settings; Set-JsonProperty $s 'minimize_to_tray' $true; Write-Settings $s } catch {}
     Sync-TrayIconMode
 })
 $MinimizeToTrayCheck.Add_Unchecked({
     if ($script:loadingSettings) { return }
     $script:minimizeToTray = $false
+    if($script:globalSaveInstalled){Sync-TrayIconMode;return}
     try { $s = Read-Settings; Set-JsonProperty $s 'minimize_to_tray' $false; Write-Settings $s } catch {}
     if (-not $script:hiddenInTray) { Sync-TrayIconMode }
 })
@@ -3972,7 +4043,8 @@ function Set-ObsSettings($settings) {
 }
 $TestObsButton.Add_Click({
     try {
-        $s=Read-Settings;Set-ObsSettings $s;Write-Settings $s;$ObsPasswordBox.Password=''
+        if($script:globalSaveInstalled){Update-GlobalSaveGroup 'Settings';if($script:globalSaveGroups.Settings.Dirty){$BottomStatus.Text='Save audio/OBS settings before testing.';return}}
+        else{$s=Read-Settings;Set-ObsSettings $s;Write-Settings $s;$ObsPasswordBox.Password=''}
         $selected=$ObsInputBox.Text
         $result=(Invoke-BridgePost '/api/maintenance/obs-inputs').result
         $ObsInputBox.ItemsSource=@($result.inputs | ForEach-Object {$_.inputName} | Sort-Object)
@@ -4017,6 +4089,7 @@ $SetupVoiceButton.Add_Click({ Set-Page 'voices'; $v = Show-AliasDialog $null; if
 $SetupStreamerBotButton.Add_Click({ Set-Page 'streamerbot' })
 function ConvertTo-SpeakVoiceToken([string]$label) {
     if (-not $label) { return '' }
+    if ($label -eq 'Keep chosen voice (priority only)') { return '' }
     if ($label -eq $script:ExportRandomLabel -or $label -eq 'random') { return 'random' }
     if ($label.StartsWith('Playlist: ', [StringComparison]::OrdinalIgnoreCase)) {
         return 'playlist:' + $label.Substring(10).Trim()
@@ -4024,7 +4097,7 @@ function ConvertTo-SpeakVoiceToken([string]$label) {
     return $label
 }
 function ConvertFrom-SpeakVoiceToken([string]$token) {
-    if (-not $token) { return '' }
+    if (-not $token) { return 'Keep chosen voice (priority only)' }
     if ($token -eq 'random') { return $script:ExportRandomLabel }
     if ($token.StartsWith('playlist:', [StringComparison]::OrdinalIgnoreCase)) {
         return 'Playlist: ' + $token.Substring(9).Trim()
@@ -4218,10 +4291,14 @@ $ExportPresetsButton.Add_Click({ Export-Maintenance 'export' })
 $ExportDiagnosticsButton.Add_Click({ Export-Maintenance 'diagnostics' })
 $RestoreBackupButton.Add_Click({
     if (-not $BackupListBox.SelectedItem) { $BottomStatus.Text = 'Choose a backup first.'; return }
+    $legacy=([string]$BackupListBox.SelectedItem).EndsWith('.json',[StringComparison]::OrdinalIgnoreCase)
+    $warning=if($legacy){'This legacy backup replaces settings and actions only. Viewer assignments stay unchanged.'}else{'This backup replaces settings, actions and viewer assignments.'}
+    if([Windows.MessageBox]::Show($window,($warning+"`nA recovery backup is saved first. Continue?"),'Restore backup','YesNo','Warning') -ne 'Yes'){return}
     try {
         Invoke-BridgePost '/api/maintenance/restore' @{filename=[string]$BackupListBox.SelectedItem} | Out-Null
         Refresh-Grid; Refresh-BackupList
-        $BottomStatus.Text = 'Backup restored. Previous settings were backed up. Restart if ports changed.'
+        $script:automationLoaded=$false
+        $BottomStatus.Text = 'Backup restored. A pre-restore recovery copy was saved. Restart YapLoq to apply all restored settings.'
     } catch { $BottomStatus.Text = $_.Exception.Message }
 })
 $ImportPresetsButton.Add_Click({

@@ -14,6 +14,22 @@ from voice_studio_speaker_bridge.settings import Settings
 
 
 class HttpServerTests(unittest.TestCase):
+    def test_action_validation_has_no_save_or_backup_side_effects(self):
+        payload = {'rules': []}
+        before = self.settings.path.read_bytes() if self.settings.path.exists() else None
+        request = Request(f'http://127.0.0.1:{self.port}/api/maintenance/validate-actions', data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json'})
+        with urlopen(request) as response:
+            self.assertEqual(json.loads(response.read())['result']['rules'], [])
+        self.assertEqual(self.settings.path.read_bytes() if self.settings.path.exists() else None, before)
+        self.assertFalse((self.settings.path.parent / 'backups').exists())
+
+    def test_change_queued_voice_route(self):
+        payload = dict(speechId='waiting-id', voice='EventVoice')
+        request = Request(f'http://127.0.0.1:{self.port}/api/queue/voice', data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json'})
+        with urlopen(request) as response:
+            self.assertTrue(json.loads(response.read())['ok'])
+        self.protocol.execute.assert_called_once_with('ChangeSpeechVoice', payload)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.settings = Settings(Path(self.temp.name) / "settings.json")
@@ -42,6 +58,17 @@ class HttpServerTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertIn("EventVoice", result["aliases"])
 
+    def test_viewer_assignment_http_roundtrip_uses_data_folder(self):
+        from voice_studio_speaker_bridge.protocol import SpeakerBotProtocol
+        self.server.protocol = SpeakerBotProtocol(self.settings, Mock())
+        payload = dict(platform='twitch', userId='123', displayName='Viewer', voice='EventVoice')
+        request = Request(f'http://127.0.0.1:{self.port}/api/viewers/set', data=json.dumps(payload).encode(), method='POST')
+        with urlopen(request) as response:
+            self.assertEqual(json.loads(response.read())['result']['voice'], 'EventVoice')
+        with urlopen(f'http://127.0.0.1:{self.port}/api/viewers') as response:
+            self.assertEqual(json.loads(response.read())['result']['viewers'][0]['userId'], '123')
+        self.assertTrue((self.settings.path.parent / 'viewers.json').is_file())
+
     def test_automations_project_legacy_without_mutating_then_save_with_backup(self):
         self.settings.streamerbot_queued_action = 'Existing avatar'
         self.settings.streamerbot_actions_enabled = True
@@ -57,7 +84,7 @@ class HttpServerTests(unittest.TestCase):
         saved = Settings(self.settings.path)
         self.assertTrue(saved.automations_migrated)
         self.assertEqual(saved.automations[0]['steps'][0]['action'], 'Existing avatar')
-        self.assertTrue(list((self.settings.path.parent / 'backups').glob('*.json')))
+        self.assertTrue(list((self.settings.path.parent / 'backups').glob('*.zip')))
         self.protocol.execute.assert_not_called()
 
     def test_invalid_automation_does_not_overwrite_saved_settings(self):

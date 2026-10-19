@@ -61,7 +61,7 @@ def test_action_display_names_change_without_replacing_installed_ids():
     assert action['name'] == 'YapLoq - Speak'
     assert action['id'] == str(uuid.uuid5(uuid.NAMESPACE_OID, 'VoxRelay/action/Speak'))
     assert 'VoxRelay' not in json.dumps(envelope)
-    assert action['actions'][0]['payload'].startswith('VSPEAK\r\n')
+    assert action['actions'][0]['payload'].startswith('YAPLOQ2\r\n')
 
 
 def test_updater_does_not_advertise_old_product_as_new_release():

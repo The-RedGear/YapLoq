@@ -1,5 +1,7 @@
 # Incremental WPF shell. Existing controls and handlers retain their state and storage.
 . (Join-Path $resourceRoot 'assets\Automations.ps1')
+. (Join-Path $resourceRoot 'assets\Viewers.ps1')
+. (Join-Path $resourceRoot 'assets\AliasChoices.ps1')
 function Register-YapLoqControlMotion($root) {
     # Popup children have their own presentation source and cannot inherit a page transition.
     $selector = $root
@@ -168,6 +170,7 @@ function New-YapLoqButton([string]$label, [string]$route, [string]$iconSource = 
         [void]$panel.Children.Add($path)
     }
     $text = [Windows.Controls.TextBlock]::new(); $text.Text = $label; $text.VerticalAlignment = 'Center'
+    if($label -eq 'Assignments' -and $panel.Children.Count){$panel.Children[0].Data=(Resolve-VoiceIcon 'mdi:account-switch-outline').Geometry}
     if ($label -eq 'Playlists' -and $panel.Children.Count) {
         $panel.Children[0].Data = [Windows.Media.Geometry]::Parse('M3 4H17V6H3Z M3 9H17V11H3Z M3 14H11V16H3Z M15 13L22 17L15 21Z')
     }
@@ -352,6 +355,7 @@ function Update-YapLoqDashboardAppearance {
     if (-not $script:dashboardEditor) { return }
     $voice = @($PlayVoiceList.Tag | Where-Object { $_.Name -eq [string]$PlayVoiceList.SelectedItem })[0]
     $accent = Get-VoiceAccent ([string]$voice.Accent)
+    if($script:dashboardAppliedAccent -eq $accent){return}
     $brush = [Windows.Media.BrushConverter]::new().ConvertFromString($accent)
     $script:dashboardEditor.BorderBrush = $brush
     $script:dashboardEditor.Background = [Windows.Media.LinearGradientBrush]::new(
@@ -370,11 +374,11 @@ function Update-YapLoqDashboardAppearance {
         }
         $script:dashboardHelpDefaultStyle=Get-YapLoqDashboardAccentStyle ($window.FindResource([Windows.Controls.Button])) $accent
         foreach ($picker in @($script:dashboardControlStyles.Control | Where-Object { $_ -is [Windows.Controls.ComboBox] })) {
-            $picker.ItemContainerStyle=Get-YapLoqDashboardAccentStyle ($window.FindResource([Windows.Controls.ComboBoxItem])) $accent
             $picker.Resources[[Windows.Controls.Primitives.ScrollBar]]=Get-YapLoqDashboardAccentStyle ($window.FindResource([Windows.Controls.Primitives.ScrollBar])) $accent
         }
         $script:dashboardStyledAccent=$accent
     }
+    $script:dashboardAppliedAccent=$accent
 }
 
 function Invoke-YapLoqPreviewAction([string]$action,$recording) {
@@ -386,6 +390,7 @@ function Invoke-YapLoqPreviewAction([string]$action,$recording) {
             'copy'{if($recording.Text){[Windows.Clipboard]::SetText([string]$recording.Text)}}
             'edit'{$alias=@($PlayVoiceList.Tag|Where-Object{$_.Name -eq $recording.Alias})[0];if($alias){$value=Show-AliasDialog $alias;if($value){Save-Alias $alias.Name $value}}}
             'queue'{Request-YapLoqPage 'queue'}
+            'viewer-default'{Set-MessageViewerDefault $recording}
             'remove'{Invoke-BridgePost '/api/queue/remove' @{speechId=[string]$recording.Id}|Out-Null;Refresh-ServiceState}
             'up'{Invoke-BridgePost '/api/queue/move' @{speechId=[string]$recording.Id;direction='up'}|Out-Null;Refresh-ServiceState}
             'down'{Invoke-BridgePost '/api/queue/move' @{speechId=[string]$recording.Id;direction='down'}|Out-Null;Refresh-ServiceState}
@@ -400,7 +405,18 @@ function Sort-YapLoqSpeechRows($rows) {
         $ticks=try { if($row.Timestamp){([datetimeoffset]$row.Timestamp).UtcDateTime.Ticks}else{0L} } catch {0L}
         [pscustomobject]@{Row=$row;Ticks=$ticks;Index=$index};$index++
     })
-    $entries | Sort-Object @{Expression='Ticks';Descending=$true},Index | ForEach-Object{$_.Row}
+    # Older builds gave a whole input one timestamp. Reverse segment index is the
+    # chronological tie-break for those saved records; new jobs keep individual times.
+    $ordered=[Collections.ArrayList]::new()
+    foreach($entry in @($entries | Sort-Object @{Expression='Ticks';Descending=$true},@{Expression={if($_.Row.SegmentIndex){[int]$_.Row.SegmentIndex}else{0}};Descending=$true},Index)){[void]$ordered.Add($entry.Row)}
+    # Only explicit Move up/down gestures may override chronology, never status.
+    foreach($move in @($script:queueManualMoves)){
+        $first=@($ordered|Where-Object Id -eq $move.Before)[0];$second=@($ordered|Where-Object Id -eq $move.After)[0]
+        if($first -and $second -and $ordered.IndexOf($first) -gt $ordered.IndexOf($second)){
+            $ordered.Remove($first);$ordered.Insert($ordered.IndexOf($second),$first)
+        }
+    }
+    $ordered | ForEach-Object{$_}
 }
 
 function Update-YapLoqDashboard($state) {
@@ -410,8 +426,9 @@ function Update-YapLoqDashboard($state) {
     if($state.current -and $state.current.status -notin @('Finished','Error','Cancelled','Skipped','Removed')){$live+=New-QueueSpeechRow $state.current ([bool]$state.paused)}
     foreach($item in @($state.queue|Where-Object{$_})){$live+=New-QueueSpeechRow $item}
     $replayStatuses=@{}
-    $historyLookup=@($HistoryGrid.ItemsSource|Where-Object{$_})+@($script:recentHistoryItems|Where-Object{$_})
-    foreach($job in @($live|Where-Object{$_.Source -eq 'History recording'})){
+    $replays=@($live|Where-Object{$_.Source -eq 'History recording'})
+    $historyLookup=if($replays.Count){@($HistoryGrid.ItemsSource|Where-Object{$_})+@($script:recentHistoryItems|Where-Object{$_})}else{@()}
+    foreach($job in $replays){
         $original=if($job.AudioPath){@($historyLookup|Where-Object{$_.AudioPath -eq $job.AudioPath -or $_.SavedPath -eq $job.AudioPath})[0]}else{$null}
         if($original -and -not $replayStatuses.ContainsKey([string]$original.Id)){$replayStatuses[[string]$original.Id]=$job.Status}
     }
@@ -420,7 +437,13 @@ function Update-YapLoqDashboard($state) {
     $items=@($live)
     foreach($item in $items){$item|Add-Member NoteProperty PreviewKind 'Live' -Force}
     $liveIds=@($live.Id)
-    $recent=@($script:recentHistoryItems|Where-Object{$_ -and $_.Id -notin $liveIds})
+    $previewLimit=if($script:dashboardPreviewLimit){$script:dashboardPreviewLimit}else{6}
+    if(-not [object]::ReferenceEquals($script:dashboardSortedHistorySource,$script:recentHistoryItems) -or $script:dashboardSortedMoveCount -ne @($script:queueManualMoves).Count){
+        $script:dashboardSortedHistory=@(Sort-YapLoqSpeechRows $script:recentHistoryItems)
+        $script:dashboardSortedHistorySource=$script:recentHistoryItems
+        $script:dashboardSortedMoveCount=@($script:queueManualMoves).Count
+    }
+    $recent=@($script:dashboardSortedHistory | Select-Object -First ($previewLimit+$live.Count) | Where-Object{$_ -and $_.Id -notin $liveIds})
     # State is polled faster than history. Keep the just-finished recording in its
     # chronological slot until the matching history snapshot arrives instead of
     # briefly removing it from the Dashboard.
@@ -430,8 +453,21 @@ function Update-YapLoqDashboard($state) {
         $finished.Status='Finished';$finished|Add-Member NoteProperty PreviewKind 'History' -Force
         $items+=$finished
     }
-    foreach($recording in $recent){$display=$recording|Select-Object *;if($replayStatuses.ContainsKey([string]$recording.Id)){$display.Status=$replayStatuses[[string]$recording.Id]};Add-SpeechRowAppearance $display;$display|Add-Member NoteProperty PreviewKind 'History' -Force;$items+= $display}
-    $items=@(Sort-YapLoqSpeechRows $items | Select-Object -First 6)
+    $previewLimit=if($script:dashboardPreviewLimit){$script:dashboardPreviewLimit}else{6}
+    # Sort cheap row references first; only hydrate/style rows actually displayed.
+    $candidates=@(Sort-YapLoqSpeechRows @($items+$recent) | Select-Object -First $previewLimit)
+    $inputSignature=([string]$live.Count)+'|'+(@($candidates|ForEach-Object{
+        '{0}|{1}|{2}|{3}|{4}|{5}|{6}|{7}|{8}' -f $_.Id,$_.Status,$_.Text,$_.Accent,$_.IconGeometry,$_.HasAudio,$_.AudioPath,$_.SavedPath,$replayStatuses[[string]$_.Id]
+    }) -join ';')
+    if($script:dashboardInputSignature -eq $inputSignature -and [object]::ReferenceEquals($script:dashboardVoiceSource,$PlayVoiceList.Tag)){return}
+    $script:dashboardInputSignature=$inputSignature;$script:dashboardVoiceSource=$PlayVoiceList.Tag
+    $items=@(foreach($recording in $candidates){
+        if($recording.Id -in $liveIds){$recording;continue}
+        $display=$recording|Select-Object *
+        if($replayStatuses.ContainsKey([string]$recording.Id)){$display.Status=$replayStatuses[[string]$recording.Id]}
+        Add-SpeechRowAppearance $display;$display|Add-Member NoteProperty PreviewKind 'History' -Force
+        $display
+    })
     # Compare displayed fields only. Do not serialize brush objects or rebuild/restart
     # entry animations on every playback poll (elapsed time is not preview content).
     $signature=([string]$live.Count)+'|'+(@($items|ForEach-Object{'{0}|{1}|{2}|{3}|{4}|{5}|{6}|{7}' -f $_.Id,$_.Status,$_.Text,$_.Accent,$_.IconGeometry,$_.HasAudio,$_.SavedPath,$_.PreviewKind}) -join ';')
@@ -448,7 +484,7 @@ function Update-YapLoqDashboard($state) {
         foreach($width in @('170','*','85','30')){$column=[Windows.Controls.ColumnDefinition]::new();$column.Width=$width;$row.ColumnDefinitions.Add($column)}
         $voice=[Windows.Controls.ContentPresenter]::new();$voice.Content=$item;$voice.ContentTemplate=$window.FindResource('SpeechAliasCell');[void]$row.Children.Add($voice)
         $message=[Windows.Controls.TextBlock]::new();$message.Text=$item.Text;$message.TextTrimming='CharacterEllipsis';$message.VerticalAlignment='Center';$message.Margin='8,0';[Windows.Controls.Grid]::SetColumn($message,1);[void]$row.Children.Add($message)
-        $status=[Windows.Controls.TextBlock]::new();$status.Text=$item.Status;$status.Foreground=$window.FindResource('Muted');$status.VerticalAlignment='Center';$status.HorizontalAlignment='Right';[Windows.Controls.Grid]::SetColumn($status,2);[void]$row.Children.Add($status)
+        $status=[Windows.Controls.TextBlock]::new();$status.Text=if($item.Status -eq 'Finished'){''}else{$item.Status};$status.Foreground=$window.FindResource('Muted');$status.VerticalAlignment='Center';$status.HorizontalAlignment='Right';[Windows.Controls.Grid]::SetColumn($status,2);[void]$row.Children.Add($status)
         if($item.PreviewKind -eq 'History'){
             $replay=[Windows.Controls.Button]::new();$replay.Style=$window.FindResource('PlayerTransportButton');$replay.Margin=0;$replay.ToolTip='Replay '+$item.Alias;$replay.Tag=$item;$replay.IsEnabled=$item.HasAudio -and $item.Status -notin @('Queued','Playing','Paused','Generating','Waiting for action');[Windows.Automation.AutomationProperties]::SetName($replay,'Replay '+$item.Alias)
             $icon=[Windows.Shapes.Path]::new();$icon.Data=(Resolve-VoiceIcon 'mdi:replay').Geometry;$icon.Width=14;$icon.Height=14;$icon.Stretch='Uniform';$icon.Fill=$window.FindResource('Accent');$replay.Content=$icon
@@ -456,6 +492,7 @@ function Update-YapLoqDashboard($state) {
         }
         $menu=[Windows.Controls.ContextMenu]::new();$menu.Tag=$item
         $actions=if($item.PreviewKind -eq 'History'){@(@('Replay','replay'),@('Save audio','save'),@('Show audio file','show'),@('Copy message','copy'),@('Edit voice','edit'),@('Open Queue','queue'))}else{@(@('Move up','up'),@('Move down','down'),@('Remove','remove'),@('Copy message','copy'),@('Edit voice','edit'),@('Open Queue','queue'))}
+        if($item.Platform -and $item.UserId){$actions+=,@('Set viewer default to this voice','viewer-default')}
         foreach($action in $actions){$option=[Windows.Controls.MenuItem]::new();$option.Header=$action[0];$option.Tag=[pscustomobject]@{Action=$action[1];Recording=$item};$option.Add_Click({param($sender,$e)Invoke-YapLoqPreviewAction $sender.Tag.Action $sender.Tag.Recording});[void]$menu.Items.Add($option)}
         $menu.Add_Opened({param($sender,$e)foreach($option in $sender.Items){$recording=$option.Tag.Recording;$option.IsEnabled=if($option.Tag.Action -in @('replay','save','show')){[bool]$recording.HasAudio}elseif($option.Tag.Action -in @('up','down','remove')){$recording.Id -ne $script:lastPlaybackState.current.id}elseif($option.Tag.Action -eq 'edit'){@($PlayVoiceList.Tag|Where-Object{$_.Name -eq $recording.Alias}).Count -gt 0}else{$true}}})
         $row.ContextMenu=$menu
@@ -475,16 +512,26 @@ function New-YapLoqRefreshButton {
     return $button
 }
 
+function Update-DashboardPreviewSpace {
+    if(-not $script:dashboardViewport -or -not $script:dashboardEditor){return}
+    $height=[Math]::Max(0,$script:dashboardViewport.ViewportHeight)
+    if([double]::IsNaN($height) -or [double]::IsInfinity($height)){return}
+    $PlaygroundPage.MinHeight=$height
+    $limit=[int][Math]::Max(6,[Math]::Min(200,[Math]::Floor(($height-$script:dashboardEditor.ActualHeight-60)/34)))
+    if($limit -ne $script:dashboardPreviewLimit){$script:dashboardPreviewLimit=$limit;Update-YapLoqDashboard $script:lastPlaybackState}
+}
+
 function Install-YapLoqDashboard {
     # Preserve the existing voice selector and its handlers as the canonical state.
     $PlaygroundPage.ColumnDefinitions.Clear()
     $PlaygroundPage.RowDefinitions.Add([Windows.Controls.RowDefinition]::new())
     $PlaygroundPage.RowDefinitions[0].Height = 'Auto'
     $PlaygroundPage.RowDefinitions.Add([Windows.Controls.RowDefinition]::new())
-    $PlaygroundPage.RowDefinitions[1].Height = 'Auto'
+    $PlaygroundPage.RowDefinitions[1].Height = '*'
     $left = $PlaygroundPage.Children[0]; $left.Visibility = 'Collapsed'
     $editor = $PlaygroundPage.Children[1]; [Windows.Controls.Grid]::SetColumn($editor,0)
     $editor.Padding = 16; $editor.VerticalAlignment = 'Top'
+    $script:dashboardEditor=$editor
     $editor.BorderBrush = [Windows.Media.BrushConverter]::new().ConvertFromString('#B6A3FF')
     $editor.Background = [Windows.Media.LinearGradientBrush]::new(
         [Windows.Media.ColorConverter]::ConvertFromString('#35264F'),
@@ -564,7 +611,7 @@ function Install-YapLoqDashboard {
     $PlayStopButton.Visibility = 'Collapsed'
     foreach ($text in $PlayButton.Content.Children) { if ($text -is [Windows.Controls.TextBlock]) { $text.Text = 'Speak message' } }
     [Windows.Automation.AutomationProperties]::SetName($PlaygroundText,'Message to speak')
-    $PlaygroundText.ToolTip = 'Write the message you want to hear. Speak message adds it to your queue.'
+    $PlaygroundText.ToolTip = 'Use [Alias] text [Another alias] text for multiple voices. Text before the first tag uses the selected voice. Use \[ for a literal bracket. Speak message adds the input to your queue.'
     $PlaygroundText.BorderBrush = [Windows.Media.BrushConverter]::new().ConvertFromString('#9580ED')
     $script:dashboardHelp = [Windows.Controls.Border]::new(); $script:dashboardHelp.Visibility = 'Collapsed'
     $script:dashboardHelp.Margin = '0,2,0,10'; $script:dashboardHelp.Padding = 14; $script:dashboardHelp.CornerRadius = 10
@@ -624,6 +671,10 @@ function Install-YapLoqDashboard {
     [void]$script:shellContent.Children.Remove($PlaygroundPage)
     $wrapper = [Windows.Controls.ScrollViewer]::new(); $wrapper.VerticalScrollBarVisibility = 'Auto'
     $wrapper.HorizontalScrollBarVisibility = 'Disabled'; $wrapper.Padding = '0,0,6,0'; $wrapper.Visibility = 'Collapsed'
+    $script:dashboardViewport=$wrapper
+    $wrapper.Add_ScrollChanged({param($sender,$e)if($e.ViewportHeightChange -ne 0){Update-DashboardPreviewSpace}})
+    $wrapper.Add_SizeChanged({Update-DashboardPreviewSpace})
+    $editor.Add_SizeChanged({Update-DashboardPreviewSpace})
     [Windows.Controls.Grid]::SetRow($wrapper,2)
     $PlaygroundPage.Visibility = 'Visible'; $wrapper.Content = $PlaygroundPage
     [void]$script:shellContent.Children.Add($wrapper)
@@ -696,18 +747,101 @@ function Install-YapLoqQueue {
     })
 }
 
+function Set-QueueSpeechFilter {
+    if(-not $script:unifiedQueueGrid.ItemsSource){return}
+    $view=[Windows.Data.CollectionViewSource]::GetDefaultView($script:unifiedQueueGrid.ItemsSource)
+    if(-not $script:queueSpeechSearch.Text.Trim() -and $script:queueSpeechStatus.SelectedItem -eq 'All speech'){
+        if($null -ne $view.Filter){$view.Filter=$null}
+        return
+    }
+    $key=$script:queueSpeechSearch.Text+'|'+$script:queueSpeechStatus.SelectedItem
+    if($null -ne $view.Filter -and $script:queueFilterKey -eq $key){return}
+    $script:queueFilterKey=$key
+    $view.Filter=[Predicate[object]]{param($row)
+        $query=$script:queueSpeechSearch.Text.Trim()
+        $kind=[string]$script:queueSpeechStatus.SelectedItem
+        $matches=switch($kind){
+            'Active' {$row.Status -in @('Queued','Queueing','Generating','Ready','Playing','Paused','Waiting for action')}
+            'Finished' {$row.Status -eq 'Finished'}
+            'Failed' {$row.Status -in @('Error','Failed')}
+            'Skipped / cancelled' {$row.Status -in @('Skipped','Cancelled')}
+            default {$true}
+        }
+        return $matches -and ((@($row.Alias,$row.User,$row.Platform,$row.Source,$row.Text,$row.Status,$row.Error) -join ' ').IndexOf($query,[StringComparison]::OrdinalIgnoreCase) -ge 0)
+    }
+}
+
+function New-QueueMessageDetails($row) {
+    $dialog=[Windows.Window]::new();$dialog.Title='Message details';$dialog.Owner=$window;$dialog.Width=650;$dialog.Height=480;$dialog.MinWidth=450;$dialog.MinHeight=320;$dialog.WindowStartupLocation='CenterOwner';$dialog.Background=$window.FindResource('Panel');$dialog.Foreground=$window.Foreground;$dialog.Resources.MergedDictionaries.Add($window.Resources)
+    $dialog.WindowStyle='None';$dialog.AllowsTransparency=$true;$dialog.Background=[Windows.Media.Brushes]::Transparent;$dialog.ResizeMode='CanResizeWithGrip'
+    $frame=[Windows.Controls.Border]::new();$frame.Background=$window.FindResource('Panel');$frame.BorderBrush=$window.FindResource('Border');$frame.BorderThickness=1;$frame.CornerRadius=12;$frame.Padding=20;$dialog.Content=$frame
+    $grid=[Windows.Controls.Grid]::new();$frame.Child=$grid
+    foreach($height in @('Auto','*','Auto','Auto')){$definition=[Windows.Controls.RowDefinition]::new();$definition.Height=$height;[void]$grid.RowDefinitions.Add($definition)}
+    $heading=[Windows.Controls.TextBlock]::new();$heading.Text=$row.Alias+' - '+$row.Status+"`n"+$row.Time+' | '+$row.Source+$(if($row.User){' | '+$row.User}else{''});$heading.TextWrapping='Wrap';$heading.Margin='0,0,0,12';[void]$grid.Children.Add($heading)
+    $message=[Windows.Controls.TextBox]::new();$message.Text=$row.Text;$message.IsReadOnly=$true;$message.TextWrapping='Wrap';$message.VerticalScrollBarVisibility='Auto';$message.AcceptsReturn=$true;[Windows.Controls.Grid]::SetRow($message,1);[void]$grid.Children.Add($message)
+    $error=[Windows.Controls.TextBlock]::new();$error.Text=if($row.Error){'Reason: '+$row.Error}else{''};$error.TextWrapping='Wrap';$error.Margin='0,12,0,0';[Windows.Controls.Grid]::SetRow($error,2);[void]$grid.Children.Add($error)
+    $close=[Windows.Controls.Button]::new();$close.Content='Close';$close.IsCancel=$true;$close.HorizontalAlignment='Right';$close.Margin='0,12,0,0';$close.Add_Click({param($sender,$e)[Windows.Window]::GetWindow($sender).Close()});[Windows.Controls.Grid]::SetRow($close,3);[void]$grid.Children.Add($close)
+    $heading.Text="Message details`n"+$heading.Text
+    $heading.Add_MouseLeftButtonDown({param($sender,$e)if($e.LeftButton -eq 'Pressed'){[Windows.Window]::GetWindow($sender).DragMove()}})
+    Apply-AppFont $dialog
+    return $dialog
+}
+
+function Show-QueueMessageDetails {
+    $row=$script:unifiedQueueGrid.SelectedItem;if(-not $row){return}
+    $dialog=New-QueueMessageDetails $row
+    [void]$dialog.ShowDialog()
+}
+
+function New-QueuedVoiceDialog($row) {
+    $dialog=New-QueueMessageDetails $row;$dialog.Title='Change queued voice';$dialog.Height=340
+    $grid=$dialog.Content.Child;$grid.Children.Clear();$grid.RowDefinitions.Clear()
+    foreach($height in @('Auto','Auto','Auto','Auto','Auto')){$definition=[Windows.Controls.RowDefinition]::new();$definition.Height=$height;[void]$grid.RowDefinitions.Add($definition)}
+    $title=[Windows.Controls.TextBlock]::new();$title.Text='Change queued voice';$title.FontWeight='SemiBold';$title.Margin='0,0,0,12';[void]$grid.Children.Add($title)
+    $hint=[Windows.Controls.TextBlock]::new();$hint.Text='Only this message changes. Saved aliases and queue position stay the same.';$hint.TextWrapping='Wrap';$hint.Margin='0,0,0,12';[Windows.Controls.Grid]::SetRow($hint,1);[void]$grid.Children.Add($hint)
+    $picker=[Windows.Controls.ComboBox]::new();$picker.Name='QueuedVoicePicker';$picker.ItemsSource=@($PlayVoiceList.Tag|Where-Object{$_.Enabled}|ForEach-Object{$_.Name});$picker.SelectedItem=[string]$row.Alias
+    if(-not $picker.SelectedItem -and $picker.Items.Count){$picker.SelectedIndex=0}
+    Set-AliasChoicePicker $picker;[Windows.Controls.Grid]::SetRow($picker,2);[void]$grid.Children.Add($picker)
+    $error=[Windows.Controls.TextBlock]::new();$error.Name='QueuedVoiceError';$error.TextWrapping='Wrap';$error.Margin='0,12,0,0';[Windows.Controls.Grid]::SetRow($error,3);[void]$grid.Children.Add($error)
+    $buttons=[Windows.Controls.StackPanel]::new();$buttons.Orientation='Horizontal';$buttons.HorizontalAlignment='Right';$buttons.Margin='0,16,0,0';[Windows.Controls.Grid]::SetRow($buttons,4);[void]$grid.Children.Add($buttons)
+    $cancel=[Windows.Controls.Button]::new();$cancel.Content='Cancel';$cancel.IsCancel=$true;$cancel.Margin='0,0,8,0';$cancel.Add_Click({param($sender,$e)[Windows.Window]::GetWindow($sender).Close()});[void]$buttons.Children.Add($cancel)
+    $apply=[Windows.Controls.Button]::new();$apply.Content='Change voice';$apply.Style=$window.FindResource('PrimaryButton');$apply.Tag=[string]$row.Id
+    $apply.Add_Click({param($sender,$e)
+        $dialog=[Windows.Window]::GetWindow($sender);$grid=$dialog.Content.Child;$picker=$grid.Children[2];$error=$grid.Children[3]
+        try{
+            if(-not $picker.SelectedItem){throw 'Choose an enabled voice.'}
+            [void](Invoke-BridgePost '/api/queue/voice' @{speechId=[string]$sender.Tag;voice=[string]$picker.SelectedItem})
+            $dialog.DialogResult=$true
+        }catch{$error.Text=$_.Exception.Message}
+    });[void]$buttons.Children.Add($apply)
+    return $dialog
+}
+
+function Show-QueuedVoiceDialog {
+    $row=$script:unifiedQueueGrid.SelectedItem
+    if(-not $row -or $row.RowKind -ne 'Live' -or $row.Status -ne 'Queued'){return}
+    $dialog=New-QueuedVoiceDialog $row
+    if($dialog.ShowDialog()){$BottomStatus.Text='Queued message voice changed';Refresh-ServiceState}
+}
+
 function Install-YapLoqCombinedQueue {
     # Keep the original grids as command/selection adapters, with one visible table.
     $QueuePage.Children.Clear();$QueuePage.RowDefinitions.Clear()
-    foreach($height in @('Auto','*')){$row=[Windows.Controls.RowDefinition]::new();$row.Height=$height;$QueuePage.RowDefinitions.Add($row)}
+    foreach($height in @('Auto','Auto','*')){$row=[Windows.Controls.RowDefinition]::new();$row.Height=$height;$QueuePage.RowDefinitions.Add($row)}
+    $filters=[Windows.Controls.Grid]::new();$filters.Margin='0,0,0,8'
+    foreach($width in @('*','170','Auto')){$column=[Windows.Controls.ColumnDefinition]::new();$column.Width=$width;[void]$filters.ColumnDefinitions.Add($column)}
+    $script:queueSpeechSearch=[Windows.Controls.TextBox]::new();$script:queueSpeechSearch.ToolTip='Search voice, message, viewer, source or error';$script:queueSpeechSearch.Tag='Search speech...';$script:queueSpeechSearch.Margin='0,0,8,0';$script:queueSpeechSearch.Add_TextChanged({Set-QueueSpeechFilter});[void]$filters.Children.Add($script:queueSpeechSearch)
+    $script:queueSpeechStatus=[Windows.Controls.ComboBox]::new();$script:queueSpeechStatus.ItemsSource=@('All speech','Active','Finished','Failed','Skipped / cancelled');$script:queueSpeechStatus.SelectedIndex=0;$script:queueSpeechStatus.Margin='0,0,8,0';$script:queueSpeechStatus.Add_SelectionChanged({Set-QueueSpeechFilter});[Windows.Controls.Grid]::SetColumn($script:queueSpeechStatus,1);[void]$filters.Children.Add($script:queueSpeechStatus)
+    $details=[Windows.Controls.Button]::new();$script:queueDetailsButton=$details;$details.Content='Details';$details.IsEnabled=$false;$details.ToolTip='Full message and failure reason';$details.Add_Click({Show-QueueMessageDetails});[Windows.Controls.Grid]::SetColumn($details,2);[void]$filters.Children.Add($details);[void]$QueuePage.Children.Add($filters)
     $toolbar=[Windows.Controls.Grid]::new();$toolbar.Margin='0,0,0,8';$toolbar.ColumnDefinitions.Add([Windows.Controls.ColumnDefinition]::new());$auto=[Windows.Controls.ColumnDefinition]::new();$auto.Width='Auto';$toolbar.ColumnDefinitions.Add($auto)
     $script:queueSelectionActions=[Windows.Controls.WrapPanel]::new()
+    $script:queueChangeVoiceButton=[Windows.Controls.Button]::new();$script:queueChangeVoiceButton.Name='QueueChangeVoiceButton';$script:queueChangeVoiceButton.Content='Change voice';$script:queueChangeVoiceButton.Height=32;$script:queueChangeVoiceButton.Margin='0,0,6,0';$script:queueChangeVoiceButton.Visibility='Collapsed';$script:queueChangeVoiceButton.ToolTip='Change a queued message before generation starts';$script:queueChangeVoiceButton.Add_Click({Show-QueuedVoiceDialog});[void]$script:queueSelectionActions.Children.Add($script:queueChangeVoiceButton)
     $script:queueSelectionHint=[Windows.Controls.TextBlock]::new();$script:queueSelectionHint.Text='Select a message for actions';$script:queueSelectionHint.Foreground=$window.FindResource('Muted');$script:queueSelectionHint.VerticalAlignment='Center';$script:queueSelectionHint.Margin='0,8,0,8';[void]$script:queueSelectionActions.Children.Add($script:queueSelectionHint)
     foreach($name in @('RemoveQueueButton','QueueUpButton','QueueDownButton','ReplayHistoryButton','SaveHistoryAudioButton','ShowHistoryAudioButton')){
         $button=$window.FindName($name);if($button.Parent -is [Windows.Controls.Panel]){[void]$button.Parent.Children.Remove($button)}
         $button.MinHeight=32;$button.Height=32;$button.Padding='10,0';$button.Margin='0,0,6,0';$button.Visibility='Collapsed';[void]$script:queueSelectionActions.Children.Add($button)
     }
-    [void]$toolbar.Children.Add($script:queueSelectionActions)
+    [void]$toolbar.Children.Add($script:queueSelectionActions);[Windows.Controls.Grid]::SetRow($toolbar,1)
     $more=[Windows.Controls.Button]::new();$more.Content='More';$more.MinHeight=32;$more.Height=32;$more.Margin=0;$more.ToolTip='Queue and history options'
     $more.ContextMenu=[Windows.Controls.ContextMenu]::new()
     foreach($spec in @(@('Clear waiting queue','ClearQueueButton'),@('Clear recent history','ClearHistoryButton'))){
@@ -726,7 +860,7 @@ function Install-YapLoqCombinedQueue {
     $table.Add_ContextMenuOpening({param($sender,$e)if(-not $sender.SelectedItem -or $sender.SelectedItem.IsDivider){$e.Handled=$true}})
     $table.Add_MouseDoubleClick({$row=$script:unifiedQueueGrid.SelectedItem;if($row -and $row.RowKind -eq 'History' -and $row.HasAudio){$ReplayHistoryButton.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))}})
     $border=[Windows.Controls.Border]::new();$border.CornerRadius=10;$border.BorderThickness=1;$border.BorderBrush=[Windows.Media.BrushConverter]::new().ConvertFromString('#50485C');$border.Child=$table
-    [Windows.Controls.Grid]::SetRow($border,1);[void]$QueuePage.Children.Add($border)
+    [Windows.Controls.Grid]::SetRow($border,2);[void]$QueuePage.Children.Add($border)
     $pause=$PauseAfterQueueButton;if($pause.Parent -is [Windows.Controls.Panel]){[void]$pause.Parent.Children.Remove($pause)}
     $pause.Style=$window.FindResource('PlayerTransportButton');$pause.Width=28;$pause.Height=28;$pause.MinHeight=28;$pause.Padding=0;$pause.Margin='2,0';$pause.VerticalAlignment='Center';$pause.ToolTip='Pause after current message';[Windows.Automation.AutomationProperties]::SetName($pause,'Pause after current message')
     $pauseIcon=[Windows.Shapes.Path]::new();$pauseIcon.Data=(Resolve-VoiceIcon 'mdi:stop').Geometry;$pauseIcon.Tag='mdi:stop';$pauseIcon.Width=12;$pauseIcon.Height=12;$pauseIcon.Stretch='Uniform'
@@ -744,6 +878,7 @@ function Install-YapLoqCombinedQueue {
 function Sync-YapLoqQueueSelection([bool]$UserSelection=$false) {
     if($script:syncingUnifiedQueue){return}
     $row=$script:unifiedQueueGrid.SelectedItem
+    if($script:queueDetailsButton){$script:queueDetailsButton.IsEnabled=$null -ne $row}
     if($UserSelection){$script:unifiedSelectionId=[string]$row.Id}
     $QueueGrid.SelectedItem=if($row.RowKind -eq 'Live'){@($QueueGrid.ItemsSource|Where-Object{$_.Id -eq $row.Id})[0]}else{$null}
     $HistoryGrid.SelectedItem=if($row.RowKind -eq 'History'){@($HistoryGrid.ItemsSource|Where-Object{$_.Id -eq $row.Id})[0]}else{$null}
@@ -752,9 +887,10 @@ function Sync-YapLoqQueueSelection([bool]$UserSelection=$false) {
     $script:queueSelectionHint.Visibility=if($row -and -not $row.IsDivider -and -not $isCurrent){'Collapsed'}else{'Visible'}
     $script:queueSelectionHint.Text=if($isCurrent){'Current speech - playback controls below'}elseif($QueueGrid.Items.Count){[string]$QueueGrid.Items.Count+' live - '+[string]$HistoryGrid.Items.Count+' recent'}else{'Nothing queued - '+[string]$HistoryGrid.Items.Count+' recent'}
     foreach($button in $script:queueSelectionActions.Children|Where-Object{$_ -is [Windows.Controls.Button]}){
-        $isLive=$button.Name -in @('RemoveQueueButton','QueueUpButton','QueueDownButton')
+        $isLive=$button.Name -in @('RemoveQueueButton','QueueUpButton','QueueDownButton','QueueChangeVoiceButton')
         $button.Visibility=if(($isLive -and $row.RowKind -eq 'Live' -and -not $isCurrent) -or (-not $isLive -and $row.RowKind -eq 'History')){'Visible'}else{'Collapsed'}
         $button.IsEnabled=if($isLive){$row.Id -and $row.Id -ne $script:lastPlaybackState.current.id}elseif($button -eq $ShowHistoryAudioButton){$button.IsEnabled}elseif($button -eq $ReplayHistoryButton){$row.HasAudio -and $row.Status -notin @('Queued','Playing','Paused','Generating','Waiting for action')}else{[bool]$row.HasAudio}
+        if($button -eq $script:queueChangeVoiceButton){$button.IsEnabled=$button.IsEnabled -and $row.Status -eq 'Queued'}
     }
 }
 
@@ -797,11 +933,9 @@ function Update-YapLoqUnifiedQueue {
         }
     }
     $available=@{};foreach($row in $incoming){$available[[string]$row.Id]=$row}
-    $previous=@($script:queueDisplayOrder|Where-Object{$available.ContainsKey([string]$_)})
-    $newRows=@(Sort-YapLoqSpeechRows @($incoming|Where-Object{$_.Id -notin $previous}))
-    $script:queueDisplayOrder=@(@($newRows|ForEach-Object{$_.Id})+$previous|Where-Object{$_})
-    $ordered=@(foreach($id in $script:queueDisplayOrder){$available[[string]$id]})
-    $signature=(@($ordered|ForEach-Object{'{0}|{1}|{2}|{3}|{4}|{5}|{6}|{7}|{8}|{9}' -f $_.Id,$_.Status,$_.Accent,$_.IconGeometry,$_.AudioLabel,$_.Text,$_.SavedPath,$_.HasAudio,$_.RowKind,$_.PendingHistory}) -join ';')+'|live='+$live.Count
+    $ordered=@(Sort-YapLoqSpeechRows $incoming)
+    $script:queueDisplayOrder=@($ordered.Id)
+    $signature=(@($ordered|ForEach-Object{'{0}|{1}|{2}|{3}|{4}|{5}|{6}|{7}|{8}|{9}|{10}' -f $_.Id,$_.Status,$_.Accent,$_.IconGeometry,$_.AudioLabel,$_.Text,$_.SavedPath,$_.HasAudio,$_.RowKind,$_.PendingHistory,$_.Error}) -join ';')+'|live='+$live.Count
     if($signature -ne $script:unifiedQueueSignature){
         $selectedId=if($table.SelectedItem.Id){[string]$table.SelectedItem.Id}else{$script:unifiedSelectionId}
         $items=$table.ItemsSource
@@ -819,11 +953,12 @@ function Update-YapLoqUnifiedQueue {
                     if($found -ge 0){$items.Move($found,$index)}else{$items.Insert($index,$row)}
                 }
                 $old=$items[$index]
-                $before=(@('Status','Text','Alias','Accent','IconGeometry','AudioLabel','SavedPath','HasAudio','RowKind','PendingHistory')|ForEach-Object{[string]$old.$_}) -join '|'
-                $after=(@('Status','Text','Alias','Accent','IconGeometry','AudioLabel','SavedPath','HasAudio','RowKind','PendingHistory')|ForEach-Object{[string]$row.$_}) -join '|'
+                $before=(@('Status','Text','Alias','Accent','IconGeometry','AudioLabel','SavedPath','HasAudio','RowKind','PendingHistory','Error')|ForEach-Object{[string]$old.$_}) -join '|'
+                $after=(@('Status','Text','Alias','Accent','IconGeometry','AudioLabel','SavedPath','HasAudio','RowKind','PendingHistory','Error')|ForEach-Object{[string]$row.$_}) -join '|'
                 if($before -ne $after){$items[$index]=$row}
             }
-            if($selectedId){$table.SelectedItem=@($items|Where-Object{$_.Id -eq $selectedId})[0]}
+            Set-QueueSpeechFilter
+            if($selectedId){$table.SelectedItem=@($table.Items|Where-Object{$_.Id -eq $selectedId})[0]}
             if($scroll){$scroll.ScrollToVerticalOffset($offset)}
         }finally{$script:syncingUnifiedQueue=$false}
         $script:unifiedQueueSignature=$signature
@@ -839,6 +974,7 @@ function Move-YapLoqDisplayedSpeech($id,$direction){
     $target=if($direction -eq 'up'){$index-1}else{$index+1}
     if($index -ge 0 -and $target -ge 0 -and $target -lt $order.Count){
         $swap=$order[$target];$order[$target]=$order[$index];$order[$index]=$swap
+        $script:queueManualMoves+=@([pscustomobject]@{Before=[string]$order[[Math]::Min($index,$target)];After=[string]$order[[Math]::Max($index,$target)]})
         $script:queueDisplayOrder=$order;$script:unifiedQueueSignature=$null
     }
 }
@@ -856,6 +992,8 @@ function Install-YapLoqItemMenu($control, $actions, [bool]$PageActions=$false) {
                 if($command.Command -like 'copy:*'){
                     $property=$command.Command.Substring(5);$text=[string]$row.$property
                     if($text){[Windows.Clipboard]::SetText($text)}
+                }elseif($command.Command -eq 'viewer-default'){
+                    Set-MessageViewerDefault $row
                 }elseif($command.Command -in @('edit-alias','test-alias','favorite-alias')){
                     $name=if($row.Alias){$row.Alias}else{$row.Name}
                     $alias=@($PlayVoiceList.Tag|Where-Object{$_.Name -eq $name})[0]
@@ -883,7 +1021,8 @@ function Install-YapLoqItemMenu($control, $actions, [bool]$PageActions=$false) {
                 $alias=@($PlayVoiceList.Tag|Where-Object{$_.Name -eq $name})[0];$enabled=$enabled -and $null -ne $alias
                 if($command.Command -eq 'favorite-alias'){$item.Header=if($alias.Favorite){'Unfavorite voice'}else{'Favorite voice'}}
             }
-            if($command.Command -notlike 'copy:*' -and $command.Command -notin @('edit-alias','test-alias','favorite-alias')){
+            if($command.Command -eq 'viewer-default'){$enabled=$enabled -and $row.Platform -and $row.UserId}
+            if($command.Command -notlike 'copy:*' -and $command.Command -notin @('edit-alias','test-alias','favorite-alias','viewer-default')){
                 $button=if($command.Command -is [Windows.Controls.Button]){$command.Command}else{$window.FindName([string]$command.Command)}
                 $enabled=$enabled -and $button -and $button.IsEnabled
                 if($control -eq $QueueGrid -and $command.Command -in @('RemoveQueueButton','QueueUpButton','QueueDownButton')){
@@ -916,7 +1055,7 @@ function Install-YapLoqItemMenu($control, $actions, [bool]$PageActions=$false) {
 }
 
 function Install-YapLoqPageContextMenus {
-    Install-YapLoqItemMenu $script:unifiedQueueGrid @(@('Replay','ReplayHistoryButton'),@('Save audio','SaveHistoryAudioButton'),@('Show audio file','ShowHistoryAudioButton'),@('Remove','RemoveQueueButton'),@('Move up','QueueUpButton'),@('Move down','QueueDownButton'),@('Copy message','copy:Text'),@('Edit voice','edit-alias'))
+    Install-YapLoqItemMenu $script:unifiedQueueGrid @(@('Message details',$script:queueDetailsButton),@('Change voice',$script:queueChangeVoiceButton),@('Replay','ReplayHistoryButton'),@('Save audio','SaveHistoryAudioButton'),@('Show audio file','ShowHistoryAudioButton'),@('Remove','RemoveQueueButton'),@('Move up','QueueUpButton'),@('Move down','QueueDownButton'),@('Copy message','copy:Text'),@('Edit voice','edit-alias'),@('Set viewer default to this voice','viewer-default'))
     Install-YapLoqItemMenu $QueueGrid @(@('Remove','RemoveQueueButton'),@('Move up','QueueUpButton'),@('Move down','QueueDownButton'),@('Copy message','copy:Text'),@('Edit voice','edit-alias'),@('Pause after current','PauseAfterQueueButton','global'))
     Install-YapLoqItemMenu $HistoryGrid @(@('Replay','ReplayHistoryButton'),@('Save audio','SaveHistoryAudioButton'),@('Show audio file','ShowHistoryAudioButton'),@('Copy message','copy:Text'),@('Edit voice','edit-alias'))
     Install-YapLoqItemMenu $PlaylistGrid @(@('Add playlist','AddPlaylistButton','global'),@('Edit playlist','EditPlaylistButton'),@('Test playlist','TestPlaylistButton'),@('Remove playlist','RemovePlaylistButton'),@('Copy name','copy:Name'))
@@ -1419,7 +1558,8 @@ function Install-YapLoqShell {
     }
     foreach ($panel in @($playlists,$routing)) {
         $save = [Windows.Controls.Button]::new(); $save.Content = if($panel -eq $routing){'Save routing'}else{'Save rules'}; $save.HorizontalAlignment = 'Left'
-        $save.Style = $window.FindResource('PrimaryButton'); $save.Add_Click({Save-Rules})
+        $save.Style = $window.FindResource('PrimaryButton')
+        if($panel -eq $routing){$save.Content='Save assignment rules';$save.Add_Click({Save-AssignmentRules})}else{$save.Add_Click({Save-Rules})}
         [void]$panel.Children.Add($save)
     }
     Install-YapLoqServices
@@ -1455,6 +1595,8 @@ function Install-YapLoqShell {
     Install-YapLoqPageContextMenus
     Install-YapLoqStreamerExpanders
     Install-YapLoqAutomations
+    Install-YapLoqViewers
+    Install-AliasChoicePickers
     foreach ($spec in @(@('AudioSettingsExpander','mdi:speaker'),@('LocalApiSettingsExpander','mdi:api'),@('LimitsSettingsExpander','mdi:speedometer'),@('WindowSettingsExpander','mdi:window-maximize'),@('DataSupportSettingsExpander','mdi:database-cog'))) {
         $section=$window.FindName($spec[0]); if(-not $section){continue}
         $header=[Windows.Controls.StackPanel]::new(); $header.Orientation='Horizontal'
@@ -1503,4 +1645,6 @@ function Install-YapLoqShell {
     $PageHeadingHost.Margin = '0'; $PageHeadingHost.Parent.Margin = '0,0,0,12'
     Set-Page 'playground'
     Register-YapLoqControlMotion $window
+    . (Join-Path $resourceRoot 'assets\GlobalSave.ps1')
+    Install-GlobalSave
 }

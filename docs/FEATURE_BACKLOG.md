@@ -15,6 +15,7 @@ These are settled constraints, not unfinished tasks:
 - Dashboard keeps a compact queue/recent-speech list, including previous voices, replay buttons and context actions.
 - Voice icons may come from any supported Icônes collection, rather than only MDI.
 - Alias color applies to voice-list selection, player artwork/background and Dashboard composer controls. The voice editor's Save button and provider-profile selection retain app purple. Recent-speech replay buttons retain app purple.
+- Saved-alias selection controls use the alias icon and its own highlight color consistently; default, playlist and random selectors retain standard app styling.
 - Update controls use the app's purple styling. Only the main title-bar download icon turns green when an update exists.
 - Use one normal installed executable location when applying updates.
 
@@ -47,23 +48,20 @@ Partial: named playlists reference aliases, support basic random selection, and 
 
 ## 4. Viewer voice assignments
 
-Partial: username-based voice rules already exist. The original stable-identity viewer workspace remains unfinished.
+Partial: Voices > Assignments combines stable platform/user-ID preferences, conditional rules, legacy name/role defaults and a configurable fallback voice. Viewers support searching, alias/playlist preferences, reset, rename-safe identities, availability warnings, and message context assignment. Assignments are saved atomically in data/viewers.json with a previous-version .bak copy. Structured GetViewers, GetViewerVoice and SetViewerVoice requests are implemented for trusted integrations. Rules/default voice remain in settings.json; existing data is retained.
 
-- [ ] Searchable viewer list under Voices, keyed by platform and stable user ID, with display names for presentation.
-- [ ] Assign a saved alias or playlist as a viewer's default.
-- [ ] Persist assignments and provide reset to channel default.
-- [ ] Handle changed display names and identical display names without confusing viewers.
-- [ ] Show assignment origin and handle deleted/unavailable voices.
-- [ ] Context action on a message to set that viewer's default voice.
-- [ ] Public voice names and permission restrictions so viewers cannot select private or restricted voices.
-- [ ] Streamer.Bot chat workflows such as !voice name, !voice random and !voice reset.
-- [ ] Structured SetViewerVoice request with validation, persistence and useful success/failure feedback.
+- [x] Opt-in public voice names and audience restrictions; private by default, with permissions rechecked on speech.
+- [x] Viewer !voice name, !voice random, !voice reset and list commands, plus an importable Streamer.Bot forwarding action.
+- [x] Platform-specific Streamer.Bot command/speech templates and viewer success, reset, list and failure events with reply/identity arguments for configurable response actions.
+- [ ] External Streamer.Bot command-trigger and chat-reply validation. Reply actions must be configured by the user; imports do not attach chat triggers automatically.
+- [x] Configuration backup ZIPs include settings, actions and viewer assignments; validated restore creates a pre-restore recovery bundle and rolls back files on write failure. Legacy settings-only JSON remains readable and leaves viewers untouched.
+- [ ] Add stable platform/user-ID fields to exported legacy VSPEAK workflows. Existing name-only packets still use legacy routing; JSON/HTTP/WebSocket requests can supply stable identity now.
 
 ## 5. Voice routing and pronunciation
 
 Partial: routing and global pronunciation already exist and have the requested homes.
 
-- [ ] Document and verify voice-selection precedence: explicit request, saved viewer preference, matching rule, default, available fallback. Existing behavior must be checked before changing it.
+Voice selection is now verified and documented: explicit request, saved viewer preference, conditional rule, legacy name/role fallback, configured default, first available enabled alias. Priority rules are independent. Streamer.Bot exports offer Use assignments for automatic voice selection; old explicit exports retain their explicit voice.
 - [ ] Explain “Why this voice?” in message details.
 - [ ] Per-voice pronunciation overrides in addition to the existing global dictionary.
 - [ ] Ensure alias edits affect future requests without unexpectedly changing playing or already-resolved queued speech.
@@ -72,10 +70,10 @@ Partial: routing and global pronunciation already exist and have the requested h
 
 Partial: the unified list, statuses, replay, manual ordering, audio actions and context menus already exist.
 
-- [ ] Search and filter speech by useful fields such as voice, status, source and message.
-- [ ] Message details with failure/rejection reasons and the selected-voice explanation.
-- [ ] Change a waiting message's voice without modifying the saved alias or interrupting playing speech.
-- [ ] Contextual viewer-default assignment, using the same persisted assignments as Voices.
+- [x] Search speech by voice, message, viewer, platform, source and error; filter by active, completed, failed or skipped/cancelled status without changing chronological order.
+- [x] Read-only message details with full text, voice, status, source, viewer, time and recorded failure reason.
+- [ ] Explain selected-voice resolution in message details, and retain pre-admission rejection records (which do not currently create queue entries).
+- [x] Change an ungenerated Queued message's voice from Queue toolbar/right-click, preserving its ID, timestamp, position, text and viewer identity. Saved aliases and playing speech remain unchanged. Generating/prepared/replayed/current/completed items are protected.
 - [ ] Verify priority controls remain understandable and accessible in the combined list.
 - [ ] Retain selection and scroll during sustained input, history refresh, manual moves and replay.
 - [ ] Verify completed, skipped, cancelled and failed requests remain distinguishable, with history/cache retention independent of waiting speech.
@@ -117,7 +115,8 @@ Partial: audio settings, tray behavior, backups, diagnostics, updates and the ma
 - [ ] Ctrl+K command/search palette, if it materially reduces navigation.
 - [ ] Remember window/editor sizes and positions.
 - [ ] Preserve subsection, filter, selection and appropriate scroll state.
-- [ ] Consistent unsaved-edit protection across editors.
+- [x] Global title-bar Save/Ctrl+S tracks page drafts, preserves them across navigation/refresh, validates before committing and retains failed edits. Local editor/record confirmations remain explicit.
+- [ ] Warn before exiting with unsaved page drafts and verify all editor cancellation paths.
 - [ ] Inline editing and small popovers for simple frequent tasks where useful.
 - [ ] Verify keyboard focus, accessible labels, screen-reader behavior and physical high-DPI/mixed-monitor layouts.
 - [ ] Verify remaining controls have consistent icons, tooltips and discoverable alternatives to right-click menus.
@@ -140,24 +139,20 @@ Remaining from the broader automation design:
 - [ ] Visual argument mapping beyond the current JSON key/value editor, and richer conditions/branching if needed.
 - [ ] Expose additional connection/provider/application events as they are implemented by YapLoq; do not show triggers that never fire.
 
-### Generate upcoming speech ahead of playback — new feature
+### Generate upcoming speech ahead of playback — core implemented locally
 
-- [ ] Generate waiting speech while the current recording plays, so the next audio is ready sooner.
-- [ ] Use bounded generation concurrency with provider-specific limits and rate-limit handling; avoid overwhelming services or increasing paid usage unnecessarily.
-- [ ] Preserve the intended playback order regardless of which generation finishes first. Generation status must not move rows.
-- [ ] Show Generating, Ready, Playing and terminal statuses on each existing queue entry.
+- Waiting speech is prepared during active playback, reuses its cached recording, and changes Generating/Ready status on its existing entry. Playback order still follows the queue and explicit manual moves. Paused playback does not start look-ahead requests. At most two pending preparations are retained after manual reorders; provider requests retain the existing global two-request bound, including uncancellable skipped requests.
+- [ ] Provider-specific limits and rate-limit handling beyond the conservative global bound; avoid overwhelming services or increasing paid usage unnecessarily.
 - [ ] Respect manual moves, skip, remove, clear and voice changes; cancel pending work where possible and discard stale results safely.
 - [ ] Bound prepared-audio memory/cache usage, reuse generated audio, and handle individual generation failures without stalling the queue.
-- [ ] Verify playback remains responsive and multi-voice input segments keep their spoken order when generated ahead.
+- [x] Automated playback test verifies multi-voice segment order while generating ahead. Physical high-volume testing remains above.
 
 ### Multiple voices in one input — new feature
 
-- [ ] Parse inputs such as: [Plankton] Hello! [Spongebob] Hi, Plankton!
-- [ ] Create one speech entry for each named alias segment.
-- [ ] Preserve segment playback order even if generation completes out of order.
-- [ ] Define behavior for text before the first tag, empty segments, literal brackets and unknown aliases.
-- [ ] Apply the same behavior to the intended Dashboard and Streamer.Bot entry points.
-- [ ] Keep rejection feedback and queue limits understandable when one request expands into several entries.
+- [x] Parse inputs such as: [Plankton] Hello! [Spongebob] Hi, Plankton! into ordered speech entries.
+- [x] Shared Dashboard/Streamer.Bot implementation, prefix text using the selected/resolved voice, empty text skipped, literal opening brackets escaped with a backslash, and unknown tags rejected.
+- [x] Validate every segment before enqueueing any; total character/queue/user limits and one cooldown per input. Viewer tags obey public names and permissions. Plain text only for multi-voice inputs; maximum 20 tags.
+- [ ] Physical end-to-end Streamer.Bot multi-voice testing under live input load.
 
 ### Reliable high-volume input — follow-up
 
@@ -186,12 +181,12 @@ The update window, GitHub release checks, startup checks, repeatable manual chec
 
 This orders the remaining list; it does not replace its requirements.
 
-1. Finish external Streamer.Bot/high-volume validation and add bounded generation ahead of playback. Standard-app control restrictions, callback-log verification, UDP input accounting and local listener diagnostics are addressed.
-2. Viewer assignments, public voice permissions and Streamer.Bot voice commands.
-3. Multi-voice input with guaranteed segment order.
-4. Queue search/details, waiting-message voice changes and reference-safe alias edits.
+1. Protect unsaved page/editor drafts on exit or context changes, following the completed global Save workflow.
+2. Reference-safe alias rename/delete: warn about affected playlists, assignments, rules and exported actions; repair internal references.
+3. Finish external Streamer.Bot/high-volume and multi-voice validation, including skip/clear/manual moves during generate-ahead playback. Core assignments, public voice commands and multi-voice splitting are implemented.
+4. Explain voice selection in message details and retain pre-admission rejection feedback. Queue search/details and waiting-message voice changes are implemented.
 5. Advanced playlists and independent preview playback.
-6. Keyboard/state/density improvements, provider metadata and broader physical testing.
+6. Keyboard/state/density improvements, provider metadata, update rehearsal and broader physical testing.
 
 ## Maintenance rule
 

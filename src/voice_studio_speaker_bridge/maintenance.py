@@ -9,12 +9,13 @@ import shutil
 import re
 import uuid
 import zipfile
+import tempfile
 
 from .settings import Settings
 from . import __version__
 
 PRESET_KEYS = ("aliases", "pronunciations", "hidden_pronunciations", "routing_rules",
-               "voice_playlists", "user_voice_rules", "role_voice_rules", "replacements")
+               "voice_playlists", "user_voice_rules", "role_voice_rules", "replacements", "assignment_default_voice")
 PROFILE_KEYS = PRESET_KEYS + ("output_device", "preview_output_device", "stream_volume", "preview_volume",
     "max_characters", "max_queue", "max_message_age", "duplicate_window", "per_user_queue_limit",
     "per_user_cooldown", "global_cooldown", "blocked_words", "user_blocklist", "user_allowlist",
@@ -23,20 +24,33 @@ PROFILE_KEYS = PRESET_KEYS + ("output_device", "preview_output_device", "stream_
 
 
 class Maintenance:
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, viewers=None):
         self.settings = settings
+        from .viewers import ViewerStore
+        self.viewers = viewers if isinstance(viewers, ViewerStore) else ViewerStore(settings.path.parent / 'viewers.json')
 
     def _folder(self, name: str) -> Path:
         folder = self.settings.path.parent / name
         folder.mkdir(parents=True, exist_ok=True)
         return folder
 
-    def backup(self) -> str:
-        self.settings.reload_if_changed()
-        self.settings.save()
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
-        destination = self._folder("backups") / f"YapLoq-{stamp}.json"
-        shutil.copy2(self.settings.path, destination)
+    def backup(self, *, recovery=False) -> str:
+        with self.viewers.lock:
+            if not recovery:
+                self.settings.reload_if_changed()
+                self.settings.save()
+                self.viewers.all()  # Refuse to label malformed viewer data a good backup.
+            elif not self.settings.path.exists():
+                self.settings.save()
+            viewer_bytes = self.viewers.path.read_bytes() if self.viewers.path.exists() else b'{"version":1,"viewers":[]}'
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
+            destination = self._folder('backups') / f'YapLoq-{stamp}.zip'
+            temporary = destination.with_suffix('.zip.tmp')
+            with zipfile.ZipFile(temporary, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr('manifest.json', json.dumps(dict(format='yaploq-backup', version=1)))
+                archive.write(self.settings.path, 'settings.json')
+                archive.writestr('viewers.json', viewer_bytes)
+            temporary.replace(destination)
         return str(destination)
 
     def restore(self, filename: str) -> None:
@@ -44,21 +58,69 @@ class Maintenance:
         if Path(filename).name != filename:
             raise ValueError("Choose a backup from the backup list")
         source = self._folder("backups") / filename
-        candidate = Settings(source)
-        if not source.is_file() or not candidate._loaded_mtime_ns:
+        if not source.is_file() or source.resolve().parent != self._folder('backups').resolve():
             raise ValueError("This backup could not be read")
-        self.backup()
-        temp = self.settings.path.with_suffix(".restore.tmp")
-        temp.write_text(source.read_text(encoding="utf-8-sig"), encoding="utf-8")
-        temp.replace(self.settings.path)
-        self.settings.load()
+        try:
+            if source.suffix.casefold() == '.zip':
+                with zipfile.ZipFile(source) as archive:
+                    entries = archive.infolist()
+                    names = [entry.filename for entry in entries]
+                    if (len(names) != len(set(names)) or set(names) != {'manifest.json', 'settings.json', 'viewers.json'}
+                            or any(entry.file_size > 20_000_000 or entry.flag_bits & 1 for entry in entries)):
+                        raise ValueError('This backup contains unexpected, duplicate or oversized files')
+                    manifest = json.loads(archive.read('manifest.json'))
+                    if manifest != dict(format='yaploq-backup', version=1):
+                        raise ValueError('This backup version is not supported')
+                    files = {name: archive.read(name) for name in ('settings.json', 'viewers.json')}
+            elif source.suffix.casefold() == '.json':
+                if source.stat().st_size > 20_000_000:
+                    raise ValueError('Settings backup is oversized')
+                files = {'settings.json': source.read_bytes()}
+            else:
+                raise ValueError('Choose a YapLoq backup ZIP or legacy settings JSON')
+            raw = json.loads(files['settings.json'].decode('utf-8-sig'))
+            if not isinstance(raw, dict) or not isinstance(raw.get('aliases', {}), dict):
+                raise ValueError('Settings backup is invalid')
+            if any(not name.strip() or any(ord(character) < 32 for character in name) or not isinstance(alias, dict)
+                   for name, alias in raw.get('aliases', {}).items()):
+                raise ValueError('Settings backup contains an invalid voice alias')
+            from .automations import validate_rules
+            validate_rules(raw.get('automations', []))
+            from .viewers import ViewerStore
+            with tempfile.TemporaryDirectory(prefix='restore-check-', dir=self.settings.path.parent) as stage:
+                for name, payload in files.items():
+                    Path(stage, name).write_bytes(payload)
+                candidate = Settings(Path(stage, 'settings.json'))
+                if not candidate._loaded_mtime_ns:
+                    raise ValueError('Settings backup could not be loaded')
+                if 'viewers.json' in files:
+                    ViewerStore(Path(stage, 'viewers.json')).all()
+        except (OSError, zipfile.BadZipFile, KeyError, UnicodeError, json.JSONDecodeError) as exc:
+            raise ValueError('This backup is damaged or could not be read') from exc
+        with self.viewers.lock:
+            self.backup(recovery=True)  # Preserve even damaged current files for recovery.
+            targets = {self.settings.path if name == 'settings.json' else self.viewers.path: payload for name, payload in files.items()}
+            originals = {path: path.read_bytes() if path.exists() else None for path in targets}
+            try:
+                for path, payload in targets.items():
+                    temp = path.with_suffix('.restore.tmp');temp.write_bytes(payload);temp.replace(path)
+            except OSError:
+                for path, payload in originals.items():
+                    if payload is None:
+                        path.unlink(missing_ok=True)
+                    else:
+                        temp = path.with_suffix('.rollback.tmp');temp.write_bytes(payload);temp.replace(path)
+                raise
+            self.viewers._cache = None
+            self.viewers._stamp = None
+            self.settings.load()
 
     def backups(self) -> list[str]:
         for legacy in self._folder("backups").glob("VoxRelay-*.json"):
             renamed = legacy.with_name("YapLoq-" + legacy.name.removeprefix("VoxRelay-"))
             if not renamed.exists():
                 shutil.copy2(legacy, renamed)
-        return sorted((path.name for path in self._folder("backups").glob("YapLoq-*.json")), reverse=True)
+        return sorted((path.name for path in self._folder('backups').glob('YapLoq-*') if path.suffix.casefold() in {'.json', '.zip'}), reverse=True)
 
     def profiles(self) -> list[str]:
         return sorted((path.stem.removeprefix("profile-") for path in self._folder("profiles").glob("profile-*.json")), key=str.casefold)
@@ -152,7 +214,7 @@ class Maintenance:
         voice = str(alias or "").strip()
         folded = voice.casefold()
         special = folded in {"random", "*"} or folded.startswith(("group:", "playlist:"))
-        if not special and voice not in self.settings.aliases:
+        if voice and not special and voice not in self.settings.aliases:
             raise ValueError("Choose an existing voice, Random, or a playlist")
         if folded in {"random", "*"}:
             if not any(a.enabled for a in self.settings.aliases.values()):
@@ -168,6 +230,13 @@ class Maintenance:
             voice = f"playlist:{match}"
         destination = self._folder("exports") / "YapLoq-actions.sb"
         destination.write_text(export_actions(self.settings.udp_port, voice), encoding="utf-8")
+        return str(destination)
+
+    def export_viewer_command(self, platform: str = '') -> str:
+        from .streamerbot_export import export_viewer_commands
+        self.settings.reload_if_changed()
+        destination = self._folder('exports') / 'YapLoq-viewer-command.sb'
+        destination.write_text(export_viewer_commands(self.settings.udp_port, platform), encoding='utf-8')
         return str(destination)
 
     @staticmethod

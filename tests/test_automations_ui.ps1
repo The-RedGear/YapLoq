@@ -29,8 +29,7 @@ if($LiveLoad){
 }
 $script:automationLoaded=$true
 (Get-AutomationControl 'AutomationSave').IsEnabled=$true
-(Get-AutomationControl 'AutomationTriggerPicker').ItemsSource=@([pscustomobject]@{source='texttospeech';event='playing';label='Playback started'})
-(Get-AutomationControl 'AutomationTriggerPicker').SelectedIndex=0
+$script:automationEventCatalog=@([pscustomobject]@{source='texttospeech';event='playing';label='Playback started'},[pscustomobject]@{source='viewer';event='voiceassigned';label='Viewer voice set successfully'})
 $click=[Windows.Controls.Button]::ClickEvent
 # Start from the actual empty-library state, not a preselected draft.
 Refresh-AutomationList $null
@@ -42,14 +41,25 @@ if($newMenu.Tag -ne 'AutomationNew'){throw 'Empty action list has no right-click
 $newMenu.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.MenuItem]::ClickEvent))
 if($script:automationRules.Count -ne 1){throw 'Right-click Add action did not create a draft'}
 (Get-AutomationControl 'AutomationName').Text='Avatar sequence'
+$window.Show();Set-Page 'streamActions';$window.UpdateLayout()
 (Get-AutomationControl 'AutomationTriggerAdd').RaiseEvent([Windows.RoutedEventArgs]::new($click))
+$browse=(Get-AutomationControl 'AutomationTriggerAdd').ContextMenu
+$browse.UpdateLayout()
+if(($browse.Items.Header -join ',') -ne 'Playback,Viewers'){throw 'Trigger categories missing or incorrectly grouped'}
+$browse.Items[0].IsSubmenuOpen=$true
+if(-not $browse.Items[0].IsSubmenuOpen -or $browse.Items[0].Items[0].Header -ne 'Playback started'){throw 'Category submenu did not open'}
+$browse.Items[0].Items[0].RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.MenuItem]::ClickEvent))
+$browse.IsOpen=$false
 if($script:automationSelected.name -ne 'Avatar sequence' -or $script:automationSelected.triggers.Count -ne 1){throw 'Action edit or trigger selection failed'}
 $triggerMenu=(Get-AutomationControl 'AutomationTriggers').ContextMenu
+$triggerMenu.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.ContextMenu]::OpenedEvent))
 if($triggerMenu.Items.Count -ne 2){throw 'Trigger context menu missing'}
 (Get-AutomationControl 'AutomationTriggers').SelectedIndex=0
 $triggerMenu.Items[1].RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.MenuItem]::ClickEvent))
 if($script:automationSelected.triggers.Count -ne 0){throw 'Right-click Remove trigger failed'}
-$triggerMenu.Items[0].RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.MenuItem]::ClickEvent))
+$triggerMenu.Items[0].Items[0].Items[0].RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.MenuItem]::ClickEvent))
+Add-AutomationTrigger $script:automationEventCatalog[0]
+if($script:automationSelected.triggers.Count -ne 1){throw 'Duplicate trigger was added'}
 $script:automationSelected.steps=@([pscustomobject]@{type='action';action='Show avatar';enabled=$true;args=[pscustomobject]@{}},[pscustomobject]@{type='delay';seconds=2;enabled=$true})
 Show-AutomationDraft $script:automationSelected
 (Get-AutomationControl 'AutomationSteps').SelectedIndex=1

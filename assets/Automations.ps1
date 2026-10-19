@@ -13,6 +13,44 @@ function Set-AutomationButtonIcon([string]$name,[string]$icon,[string]$label,[bo
 
 function Set-AutomationMessage([string]$message){(Get-AutomationControl 'AutomationStatus').Text=$message}
 
+function Get-TriggerCategory($trigger){
+    if($trigger.source -eq 'viewer'){return 'Viewers'}
+    if($trigger.source -eq 'legacy'){return 'Queue sessions'}
+    if($trigger.source -eq 'integration'){return 'Integrations'}
+    if($trigger.event -in @('playing','finished','cancelled')){return 'Playback'}
+    if($trigger.event -in @('queueadded','textqueued','deleted')){return 'Queue'}
+    return 'Speech'
+}
+
+function Add-AutomationTrigger($trigger){
+    if(-not(Save-AutomationDraft) -or -not $script:automationSelected -or -not $trigger){return}
+    if(@($script:automationSelected.triggers|Where-Object{$_.source -eq $trigger.source -and $_.event -eq $trigger.event}).Count){return}
+    $script:automationSelected.triggers+=[pscustomobject]@{source=$trigger.source;event=$trigger.event}
+    Show-AutomationDraft $script:automationSelected
+}
+
+function Add-TriggerMenuCategories($menu){
+    foreach($category in @('Speech','Queue','Playback','Viewers','Integrations','Queue sessions')){
+        $entries=@($script:automationEventCatalog|Where-Object{(Get-TriggerCategory $_) -eq $category})
+        if(-not $entries.Count){continue}
+        $group=[Windows.Controls.MenuItem]::new();$group.Header=$category
+        foreach($trigger in $entries){
+            $item=[Windows.Controls.MenuItem]::new();$item.Header=$trigger.label;$item.Tag=$trigger
+            $item.Add_Click({param($sender,$e)$e.Handled=$true;Add-AutomationTrigger $sender.Tag})
+            [void]$group.Items.Add($item)
+        }
+        [void]$menu.Items.Add($group)
+    }
+}
+
+function Open-AutomationTriggerMenu {
+    if(-not $script:automationSelected){return}
+    $button=Get-AutomationControl 'AutomationTriggerAdd'
+    $menu=[Windows.Controls.ContextMenu]::new();$menu.Resources.MergedDictionaries.Add($window.Resources)
+    Add-TriggerMenuCategories $menu
+    $menu.PlacementTarget=$button;$menu.Placement='Bottom';$button.ContextMenu=$menu;$menu.IsOpen=$true
+}
+
 function Update-AutomationLegacyUi([bool]$migrated){
     if(-not $script:automationLegacyCard){return}
     $script:automationLegacyCard.Visibility=if($migrated){'Collapsed'}else{'Visible'}
@@ -44,10 +82,11 @@ function Show-AutomationDraft($rule){
     (Get-AutomationControl 'AutomationEnabled').IsChecked=[bool]$rule.enabled
     (Get-AutomationControl 'AutomationOnError').SelectedIndex=if($rule.onError -eq 'continue'){1}else{0}
     (Get-AutomationControl 'AutomationConditions').ItemsSource=@($rule.conditions)
-    foreach($trigger in @($rule.triggers)){$match=@((Get-AutomationControl 'AutomationTriggerPicker').Items|Where-Object{$_.source -eq $trigger.source -and $_.event -eq $trigger.event})[0];$trigger|Add-Member NoteProperty caption $(if($match){$match.label}else{$trigger.event}) -Force}
+    foreach($trigger in @($rule.triggers)){$match=@($script:automationEventCatalog|Where-Object{$_.source -eq $trigger.source -and $_.event -eq $trigger.event})[0];$trigger|Add-Member NoteProperty caption $(if($match){$match.label}else{$trigger.event}) -Force}
     (Get-AutomationControl 'AutomationTriggers').ItemsSource=@($rule.triggers)
     foreach($step in @($rule.steps)){$summary=if($step.type -eq 'delay'){[string]$step.seconds+' seconds'}elseif($step.PSObject.Properties['label'] -and $step.label){$step.label}else{$step.action};$step|Add-Member NoteProperty Summary $summary -Force}
     (Get-AutomationControl 'AutomationSteps').ItemsSource=@($rule.steps)
+    if(Get-Command Update-GlobalSaveGroup -ErrorAction SilentlyContinue){Update-GlobalSaveGroup 'Actions'}
 }
 
 function Refresh-AutomationList($select){
@@ -75,12 +114,12 @@ function Start-AutomationLoad {
         try{
             $result=($script:automationLoadTask.GetAwaiter().GetResult()|ConvertFrom-Json).result
             $script:automationRules=@($result.rules)
-            (Get-AutomationControl 'AutomationTriggerPicker').ItemsSource=@($result.events)
-            (Get-AutomationControl 'AutomationTriggerPicker').SelectedIndex=0
+            $script:automationEventCatalog=@($result.events)
             $script:automationLoaded=$true
             Update-AutomationLegacyUi ([bool]$result.migrated)
             (Get-AutomationControl 'AutomationSave').IsEnabled=$true
             Refresh-AutomationList (@($script:automationRules)[0])
+            if(Get-Command Reset-GlobalSaveGroup -ErrorAction SilentlyContinue){Reset-GlobalSaveGroup 'Actions'}
             Set-AutomationMessage 'Runs are queued. Steps dispatch in saved order. Save actions to apply edits and migrate existing playback hooks.'
             if($script:automationCreateAfterLoad){$script:automationCreateAfterLoad=$false;(Get-AutomationControl 'AutomationNew').RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))}
         }catch{$script:automationLoaded=$false;Set-AutomationMessage ('Could not load actions. Click Add action to retry. '+$_.Exception.Message)}
@@ -213,20 +252,21 @@ function Install-YapLoqAutomations {
     (Get-AutomationControl 'AutomationNew').Content='Add action'
     (Get-AutomationControl 'AutomationEmptyAdd').Style=$window.FindResource('PrimaryButton')
     (Get-AutomationControl 'AutomationEmptyAdd').Add_Click({(Get-AutomationControl 'AutomationNew').RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))})
-    $picker=Get-AutomationControl 'AutomationTriggerPicker';$picker.DisplayMemberPath='';$picker.ItemTemplate=[Windows.Markup.XamlReader]::Parse('<DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><TextBlock Text="{Binding label}" TextTrimming="CharacterEllipsis"/></DataTemplate>')
+    $script:automationEventCatalog=@()
     foreach($spec in @(@('AutomationNew','mdi:plus','Add action',$false),@('AutomationDuplicate','mdi:content-copy','Duplicate action',$false),@('AutomationDelete','mdi:delete','Remove action',$false),@('AutomationSave','mdi:content-save','Save actions',$true),@('AutomationUp','mdi:arrow-up','Move action up',$false),@('AutomationDown','mdi:arrow-down','Move action down',$false),@('AutomationTriggerAdd','mdi:plus','Add trigger',$false),@('AutomationTriggerRemove','mdi:delete','Remove trigger',$false),@('AutomationStepAdd','mdi:plus','Add',$true),@('AutomationStepEdit','mdi:pencil','Edit sub-action',$false),@('AutomationStepRemove','mdi:delete','Remove sub-action',$false),@('AutomationStepUp','mdi:arrow-up','Move sub-action up',$false),@('AutomationStepDown','mdi:arrow-down','Move sub-action down',$false))){Set-AutomationButtonIcon $spec[0] $spec[1] $spec[2] $spec[3]}
     Set-AutomationButtonIcon 'AutomationNew' 'mdi:plus' 'Add action' $true
+    Set-AutomationButtonIcon 'AutomationTriggerAdd' 'mdi:plus' 'Add trigger' $true
     (Get-AutomationControl 'AutomationSearch').Add_TextChanged({Set-AutomationSearch})
     foreach($column in (Get-AutomationControl 'AutomationSteps').Columns){if($column -is [Windows.Controls.DataGridTextColumn]){$column.ElementStyle=$window.FindResource('GridText')}}
     (Get-AutomationControl 'AutomationSteps').Columns[0].Width=55
     (Get-AutomationControl 'AutomationSteps').RowHeight=34
     (Get-AutomationControl 'AutomationSteps').Columns[2].MinWidth=120
     (Get-AutomationControl 'AutomationSteps').Add_SizeChanged({param($sender,$e)if($sender.ActualWidth -gt 0){$sender.Columns[2].Width=[Windows.Controls.DataGridLength]::new([Math]::Max(120,$sender.ActualWidth-150))}})
-    (Get-AutomationControl 'AutomationConditions').Columns[0].ItemsSource=@('alias','source','user','voiceName','engineName','id','text','integration')
+    (Get-AutomationControl 'AutomationConditions').Columns[0].ItemsSource=@('alias','source','user','voiceName','engineName','id','text','integration','platform','userId','reason','publicVoice')
     (Get-AutomationControl 'AutomationConditions').Columns[1].ItemsSource=@('equals','contains','notEquals')
     (Get-AutomationControl 'AutomationConditionAdd').Add_Click({if(-not(Save-AutomationDraft) -or -not $script:automationSelected){return};$script:automationSelected.conditions+=[pscustomobject]@{field='alias';op='equals';value=''};Show-AutomationDraft $script:automationSelected})
     (Get-AutomationControl 'AutomationConditionRemove').Add_Click({if(-not(Save-AutomationDraft)){return};$selected=(Get-AutomationControl 'AutomationConditions').SelectedItem;$script:automationSelected.conditions=@($script:automationSelected.conditions|Where-Object{$_ -ne $selected});Show-AutomationDraft $script:automationSelected})
-    foreach($spec in @(@('AutomationList',@(@('Add action','AutomationNew'),@('Duplicate','AutomationDuplicate'),@('Move up','AutomationUp'),@('Move down','AutomationDown'),@('Remove','AutomationDelete'))),@('AutomationTriggers',@(@('Add selected trigger','AutomationTriggerAdd'),@('Remove','AutomationTriggerRemove'))),@('AutomationSteps',@(@('Add sub-action','AutomationStepAdd'),@('Edit','AutomationStepEdit'),@('Move up','AutomationStepUp'),@('Move down','AutomationStepDown'),@('Remove','AutomationStepRemove'))))){
+    foreach($spec in @(@('AutomationList',@(@('Add action','AutomationNew'),@('Duplicate','AutomationDuplicate'),@('Move up','AutomationUp'),@('Move down','AutomationDown'),@('Remove','AutomationDelete'))),@('AutomationSteps',@(@('Add sub-action','AutomationStepAdd'),@('Edit','AutomationStepEdit'),@('Move up','AutomationStepUp'),@('Move down','AutomationStepDown'),@('Remove','AutomationStepRemove'))))){
         $control=Get-AutomationControl $spec[0];$menu=[Windows.Controls.ContextMenu]::new()
         foreach($entry in $spec[1]){$item=[Windows.Controls.MenuItem]::new();$item.Header=$entry[0];$item.Tag=$entry[1];$item.Add_Click({param($sender,$e)$button=Get-AutomationControl $sender.Tag;if($button.IsEnabled){$button.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))}});[void]$menu.Items.Add($item)}
         $control.Add_PreviewMouseRightButtonDown({param($sender,$e)
@@ -243,6 +283,14 @@ function Install-YapLoqAutomations {
         })
         $control.ContextMenu=$menu
     }
+    $triggerList=Get-AutomationControl 'AutomationTriggers';$triggerMenu=[Windows.Controls.ContextMenu]::new();$triggerMenu.Resources.MergedDictionaries.Add($window.Resources)
+    $triggerMenu.Add_Opened({param($sender,$e)
+        $sender.Items.Clear();$add=[Windows.Controls.MenuItem]::new();$add.Header='Add trigger';$add.IsEnabled=[bool]$script:automationSelected;Add-TriggerMenuCategories $add;[void]$sender.Items.Add($add)
+        $remove=[Windows.Controls.MenuItem]::new();$remove.Header='Remove';$remove.IsEnabled=$null -ne (Get-AutomationControl 'AutomationTriggers').SelectedItem
+        $remove.Add_Click({(Get-AutomationControl 'AutomationTriggerRemove').RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))});[void]$sender.Items.Add($remove)
+    })
+    $triggerList.Add_PreviewMouseRightButtonDown({param($sender,$e)$container=[Windows.Controls.ItemsControl]::ContainerFromElement($sender,$e.OriginalSource);if($container){$sender.SelectedItem=$sender.ItemContainerGenerator.ItemFromContainer($container)}})
+    $triggerList.ContextMenu=$triggerMenu
     (Get-AutomationControl 'AutomationList').Add_SelectionChanged({
         if($script:automationSelecting){return}
         if(-not(Save-AutomationDraft)){$script:automationSelecting=$true;(Get-AutomationControl 'AutomationList').SelectedItem=$script:automationSelected;$script:automationSelecting=$false;return}
@@ -252,7 +300,7 @@ function Install-YapLoqAutomations {
     (Get-AutomationControl 'AutomationDuplicate').Add_Click({if(-not(Save-AutomationDraft) -or -not $script:automationSelected){return};$copy=$script:automationSelected|ConvertTo-Json -Depth 30|ConvertFrom-Json;$copy.id=[guid]::NewGuid().ToString();$copy.name+=' copy';$script:automationRules+=$copy;Refresh-AutomationList $copy})
     (Get-AutomationControl 'AutomationDelete').Add_Click({$id=$script:automationSelected.id;$script:automationRules=@($script:automationRules|Where-Object{$_.id -ne $id});Refresh-AutomationList (@($script:automationRules)[0])})
     (Get-AutomationControl 'AutomationUp').Add_Click({Move-AutomationItem 'rule' -1});(Get-AutomationControl 'AutomationDown').Add_Click({Move-AutomationItem 'rule' 1})
-    (Get-AutomationControl 'AutomationTriggerAdd').Add_Click({if(-not(Save-AutomationDraft) -or -not $script:automationSelected){return};$trigger=(Get-AutomationControl 'AutomationTriggerPicker').SelectedItem;if($trigger){$script:automationSelected.triggers+= [pscustomobject]@{source=$trigger.source;event=$trigger.event};Show-AutomationDraft $script:automationSelected}})
+    (Get-AutomationControl 'AutomationTriggerAdd').Add_Click({Open-AutomationTriggerMenu})
     (Get-AutomationControl 'AutomationTriggerRemove').Add_Click({if(-not(Save-AutomationDraft)){return};$selected=(Get-AutomationControl 'AutomationTriggers').SelectedItem;$script:automationSelected.triggers=@($script:automationSelected.triggers|Where-Object{$_ -ne $selected});Show-AutomationDraft $script:automationSelected})
     (Get-AutomationControl 'AutomationStepAdd').Add_Click({if(-not(Save-AutomationDraft) -or -not $script:automationSelected){return};$step=Show-AutomationStep $null;if($step){$script:automationSelected.steps+=$step;Show-AutomationDraft $script:automationSelected}})
     (Get-AutomationControl 'AutomationStepEdit').Add_Click({if(-not(Save-AutomationDraft)){return};$control=Get-AutomationControl 'AutomationSteps';$old=$control.SelectedItem;if(-not $old){return};$step=Show-AutomationStep $old;if($step){$step.enabled=$old.enabled;$script:automationSelected.steps=@($script:automationSelected.steps|ForEach-Object{if($_ -eq $old){$step}else{$_}});Show-AutomationDraft $script:automationSelected}})

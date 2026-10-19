@@ -12,6 +12,27 @@ from voice_studio_speaker_bridge.settings import Settings
 
 
 class UdpServerTests(unittest.TestCase):
+    def test_yaploq_markers_keep_legacy_packet_compatibility(self):
+        protocol = self._send(b'YAPLOQ\nrandom\n[Plankton] hello [Spongebob] hi\nOwner\nowner')
+        self.assertEqual(protocol.execute.call_args.args[0], 'Speak')
+        self.assertEqual(protocol.execute.call_args.args[1]['message'], '[Plankton] hello [Spongebob] hi')
+        protocol = self._send(b'YAPLOQ2\n\ntwitch\n123\nviewer\nviewer\nfalse\nfalse\nfalse\nhello')
+        self.assertEqual(protocol.execute.call_args.args[1]['userId'], '123')
+
+    def test_stable_identity_speech_and_command_packets(self):
+        protocol = self._send(b'VSPEAK2\n\ntwitch\n123\nviewer\nmoderator\nfalse\nfalse\ntrue\nHello\nworld')
+        request, data = protocol.execute.call_args.args
+        self.assertEqual(request, 'Speak')
+        self.assertEqual(data['message'], 'Hello\nworld')
+        self.assertEqual(data['userId'], '123')
+        self.assertTrue(data['isModerator'])
+        self.assertEqual(data['voice'], '')
+        protocol = self._send(b'VVOICE\ntwitch\n123\nviewer\nviewer\nfalse\nfalse\nfalse\n!voice random')
+        request, data = protocol.execute.call_args.args
+        self.assertEqual(request, 'ViewerVoiceCommand')
+        self.assertEqual(data['message'], '!voice random')
+        self.assertFalse(data['isModerator'])
+
     def _send(self, payload: bytes):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)

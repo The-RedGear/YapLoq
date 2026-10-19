@@ -1,0 +1,183 @@
+from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import Mock
+
+import pytest
+
+from voice_studio_speaker_bridge.engine import SpeechEngine
+from voice_studio_speaker_bridge.events import EventBus
+from voice_studio_speaker_bridge.models import VoiceAlias
+from voice_studio_speaker_bridge.protocol import SpeakerBotProtocol
+from voice_studio_speaker_bridge.settings import Settings
+from voice_studio_speaker_bridge.multi_voice import split_voices
+
+
+@pytest.fixture
+def engine(tmp_path):
+    value = SpeechEngine(Settings(tmp_path / 'settings.json'), EventBus())
+    value.settings.aliases['Other'] = VoiceAlias('Other', public=True, public_name='Public Other')
+    value.settings.aliases['EventVoice'].public = True
+    yield value
+    value.shutdown()
+
+
+def speak(engine, text, **kw):
+    return SpeakerBotProtocol(engine.settings, engine).execute('Speak', dict(message=text, source='Manual', **kw))
+
+
+def queued(engine):
+    return [(job.text, job.alias.name) for job in engine.pending.queue]
+
+
+def test_segments_prefix_repeats_and_metadata(engine):
+    result = speak(engine, 'Intro [Other] Hi [EventVoice] Hello [Other] Again', user='Viewer')
+    assert queued(engine) == [('Intro', 'EventVoice'), ('Hi', 'Other'), ('Hello', 'EventVoice'), ('Again', 'Other')]
+    assert len(result['speechIds']) == 4 and result['speechId'] == result['speechIds'][0]
+    assert [item['voiceName'] for item in result['segments']] == ['EventVoice', 'Other', 'EventVoice', 'Other']
+    assert all(job.user == 'Viewer' for job in engine.pending.queue)
+
+
+def test_invalid_later_tag_or_blocked_segment_publishes_nothing(engine):
+    with pytest.raises(ValueError, match='full alias name'):
+        speak(engine, '[Other] valid [Missing] invalid')
+    assert queued(engine) == [] and engine.events.recent() == []
+    engine.settings.max_characters = 12
+    with pytest.raises(ValueError, match='character'):
+        speak(engine, '[Other] abcdefgh [EventVoice] ijklmnop')
+    assert queued(engine) == [] and engine.events.recent() == []
+
+
+def test_batch_capacity_and_user_limit_are_atomic(engine):
+    engine.settings.max_queue = 1
+    with pytest.raises(ValueError, match='fit all'):
+        speak(engine, '[Other] one [EventVoice] two')
+    assert queued(engine) == []
+    engine.settings.max_queue = 20
+    engine.settings.per_user_queue_limit = 1
+    with pytest.raises(ValueError, match='queue limit'):
+        speak(engine, '[Other] one [EventVoice] two', user='viewer')
+    assert queued(engine) == []
+
+
+def test_one_input_consumes_cooldown_once_and_failed_input_does_not(engine):
+    engine.settings.global_cooldown = 10
+    engine.settings.per_user_cooldown = 10
+    engine.settings.max_characters = 10
+    with pytest.raises(ValueError):
+        speak(engine, '[Other] 123456 [EventVoice] 789012', user='viewer')
+    engine.settings.max_characters = 100
+    speak(engine, '[Other] one [EventVoice] two', user='viewer')
+    assert len(queued(engine)) == 2
+    with pytest.raises(ValueError, match='cooldown'):
+        speak(engine, 'Next', user='viewer')
+
+
+def test_viewer_tags_use_public_names_and_permissions(engine):
+    protocol = SpeakerBotProtocol(engine.settings, engine)
+    data = dict(platform='twitch', userId='123', message='[Public Other] Hello [EventVoice] Hi')
+    protocol.execute('Speak', data)
+    assert queued(engine) == [('Hello', 'Other'), ('Hi', 'EventVoice')]
+    assert all(job.user_id == '123' for job in engine.pending.queue)
+    engine.settings.aliases['Other'].viewer_access = 'moderators'
+    with pytest.raises(ValueError, match='unavailable'):
+        protocol.execute('Speak', data)
+    assert len(queued(engine)) == 2
+
+
+def test_legacy_streamerbot_owner_action_can_tag_private_aliases(engine):
+    engine.settings.aliases['Other'].public = False
+    engine.settings.aliases['EventVoice'].public = False
+    protocol = SpeakerBotProtocol(engine.settings, engine)
+    protocol.execute('Speak', dict(voice='random', source='Streamer.bot', user='Owner',
+                                  message='[Other] first [EventVoice] second'))
+    assert queued(engine) == [('first', 'Other'), ('second', 'EventVoice')]
+    with pytest.raises(ValueError, match='unavailable'):
+        protocol.execute('Speak', dict(platform='twitch', userId='123', message='[Other] not allowed'))
+
+
+def test_short_unique_alias_and_segment_sort_metadata(engine):
+    engine.settings.aliases['Spongebob Squarepants'] = VoiceAlias('Spongebob Squarepants')
+    speak(engine, '[Other] first [Spongebob] second')
+    jobs = list(engine.pending.queue)
+    assert jobs[1].alias.name == 'Spongebob Squarepants'
+    assert jobs[0].timestamp <= jobs[1].timestamp
+    assert [engine._job_dict(job)['segmentIndex'] for job in jobs] == [0, 1]
+    engine.settings.aliases['Spongebob Another'] = VoiceAlias('Spongebob Another')
+    with pytest.raises(ValueError, match='full alias name'):
+        speak(engine, '[Spongebob] ambiguous')
+
+
+def test_real_udp_packet_splits_into_separate_queue_voices(engine):
+    import socket
+    import threading
+    from time import monotonic, sleep
+    from voice_studio_speaker_bridge.server import BridgeServers
+    engine.settings.aliases['Spongebob Squarepants'] = VoiceAlias('Spongebob Squarepants')
+    engine.settings.udp_port = 0
+    server = BridgeServers(engine.settings, SpeakerBotProtocol(engine.settings, engine), engine.events)
+    server.udp_thread = threading.Thread(target=server._run_udp, daemon=True)
+    server.udp_thread.start()
+    try:
+        deadline = monotonic() + 2
+        while server.udp_server is None and monotonic() < deadline:
+            sleep(0.01)
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
+            client.sendto(b'YAPLOQ\nrandom\n[Other] first [Spongebob] second\nOwner\nowner',
+                          ('127.0.0.1', server.udp_server.server_address[1]))
+        deadline = monotonic() + 2
+        while len(queued(engine)) < 2 and monotonic() < deadline:
+            sleep(0.01)
+        assert queued(engine) == [('first', 'Other'), ('second', 'Spongebob Squarepants')]
+    finally:
+        server.stop()
+
+
+def test_concurrent_inputs_do_not_interleave_segments(engine):
+    def submit(i):
+        speak(engine, f'[Other] {i}a [EventVoice] {i}b')
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(submit, range(4)))
+    texts = [text for text, _ in queued(engine)]
+    for i in range(4):
+        assert texts.index(f'{i}b') == texts.index(f'{i}a') + 1
+
+
+def test_escaped_brackets_empty_tags_and_ssml(engine):
+    assert split_voices(r'Literal \[Other]', 'default', Mock()) == [('Literal [Other]', 'default')]
+    with pytest.raises(ValueError, match='text after'):
+        speak(engine, '[Other]')
+    engine.settings.aliases['Other'].ssml = True
+    with pytest.raises(ValueError, match='SSML'):
+        speak(engine, '[Other] hello [EventVoice] hi')
+    assert queued(engine) == []
+
+
+def test_generate_ahead_preserves_segment_playback_order(engine):
+    from threading import Event
+    from time import monotonic, sleep
+    playing, release, prepared = Event(), Event(), Event()
+    played = []
+    engine.audio = Mock(warning='', remaining_seconds=0.1, elapsed_seconds=0.0, duration_seconds=0.1, progress=0.0)
+    engine.audio.decode_wav.side_effect = lambda wav, *_a, **_k: (wav, 100)
+    def synth(job):
+        if job.text == 'second':
+            prepared.set()
+        return job.text.encode()
+    def play(pcm, **_kw):
+        played.append(pcm.decode())
+        if pcm == b'first':
+            playing.set()
+            release.wait(3)
+        return True
+    engine._synthesize = synth
+    engine.audio.play.side_effect = play
+    speak(engine, '[Other] first [EventVoice] second [Other] third')
+    engine.start()
+    try:
+        assert playing.wait(2) and prepared.wait(2)
+        assert played == ['first']
+    finally:
+        release.set()
+    deadline = monotonic() + 3
+    while len(played) < 3 and monotonic() < deadline:
+        sleep(0.01)
+    assert played == ['first', 'second', 'third']

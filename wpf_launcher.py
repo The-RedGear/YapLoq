@@ -48,6 +48,8 @@ def _verify_package(output: Path) -> int:
         root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
         resources = ["YapLoq.ps1", "YapLoq.xaml", "ImportPreview.xaml",
                      "assets/Automations.ps1", "assets/Automations.xaml", "assets/AutomationStep.xaml",
+                     "assets/Viewers.ps1", "assets/Viewers.xaml",
+                     "assets/AliasChoices.ps1", "assets/GlobalSave.ps1",
                      "assets/Updates.ps1", "assets/Updates.xaml", "assets/ApplyUpdate.ps1",
                      "assets/RuleEditors.ps1", "assets/ProfanityPanel.xaml",
                      "assets/ProfanityDialog.xaml", "assets/profanity-defaults.json",
