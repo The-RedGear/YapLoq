@@ -28,6 +28,28 @@ def queued(engine):
     return [(job.text, job.alias.name) for job in engine.pending.queue]
 
 
+@pytest.mark.parametrize('text,expected', [
+    ('!say [Other] Hello there', [('Hello there', 'Other')]),
+    ('@viewer [Other] Hello there', [('Hello there', 'Other')]),
+    ('!say @viewer [Other] Hello [EventVoice] @someone [Other] Goodbye',
+     [('Hello', 'Other'), ('Goodbye', 'Other')]),
+    ('!say Hello @viewer keep reading', [('Hello keep reading', 'EventVoice')]),
+])
+def test_chat_cleanup_preserves_remaining_speech_before_voice_splitting(engine, text, expected):
+    engine.settings.ignore_command_messages = True
+    engine.settings.ignore_mention_messages = True
+    speak(engine, text)
+    assert queued(engine) == expected
+
+
+def test_chat_cleanup_rejects_only_when_no_speech_remains(engine):
+    engine.settings.ignore_command_messages = True
+    engine.settings.ignore_mention_messages = True
+    with pytest.raises(ValueError, match='empty'):
+        speak(engine, '!say @viewer')
+    assert queued(engine) == []
+
+
 def test_segments_prefix_repeats_and_metadata(engine):
     result = speak(engine, 'Intro [Other] Hi [EventVoice] Hello [Other] Again', user='Viewer')
     assert queued(engine) == [('Intro', 'EventVoice'), ('Hi', 'Other'), ('Hello', 'EventVoice'), ('Again', 'Other')]

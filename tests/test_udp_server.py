@@ -12,6 +12,38 @@ from voice_studio_speaker_bridge.settings import Settings
 
 
 class UdpServerTests(unittest.TestCase):
+    def test_single_tag_speech_and_control_dispatch(self):
+        from voice_studio_speaker_bridge.yaploq_payload import speech_payload, control_payload
+        payload = speech_payload('', 'twitch', '[One] First\n[Two] Second')
+        for key, value in dict(userId='123', userName='Viewer', broadcastUserId='123', userGroups='Guests',
+                               isSubscribed='False', isVip='True', isModerator='True').items():
+            payload = payload.replace('%'+key+'%', value)
+        protocol = self._send(payload.encode())
+        command, data = protocol.execute.call_args.args
+        self.assertEqual(command, 'Speak')
+        self.assertEqual(data['message'], '[One] First\n[Two] Second')
+        self.assertTrue(data['isBroadcaster'])
+        self.assertTrue(data['isVip'])
+        self.assertEqual(data['groups'], ['Guests'])
+        protocol = self._send(control_payload('skipresume').encode())
+        self.assertEqual(protocol.execute.call_args.args, ('SkipAndResume', {}))
+        protocol = self._send(control_payload('reset', 'Viewer').encode())
+        self.assertEqual(protocol.execute.call_args.args[0], 'SetViewerVoice')
+        self.assertEqual(protocol.execute.call_args.args[1]['username'], 'Viewer')
+
+    def test_role_metadata_for_owner_flags_and_custom_groups(self):
+        for user_id, owner in [('123', True), ('456', False)]:
+            protocol = self._send(('YAPLOQ2\n\ntwitch\n'+user_id+'\nviewer\nYAPLOQMETA|123|Guests, VIP Club\nfalse\ntrue\ntrue\nHello\nworld').encode())
+            data = protocol.execute.call_args.args[1]
+            self.assertEqual(data['isBroadcaster'], owner)
+            self.assertTrue(data['isVip'])
+            self.assertTrue(data['isModerator'])
+            self.assertEqual(data['groups'], ['Guests', 'VIP Club'])
+            self.assertEqual(data['message'], 'Hello\nworld')
+        protocol = self._send(b'YAPLOQ2\n\ntwitch\n123\nviewer\nYAPLOQMETA|%broadcastUserId%|%userGroups%\nfalse\nfalse\nfalse\nHello')
+        self.assertFalse(protocol.execute.call_args.args[1]['isBroadcaster'])
+        self.assertEqual(protocol.execute.call_args.args[1]['groups'], [])
+
     def test_yaploq_markers_keep_legacy_packet_compatibility(self):
         protocol = self._send(b'YAPLOQ\nrandom\n[Plankton] hello [Spongebob] hi\nOwner\nowner')
         self.assertEqual(protocol.execute.call_args.args[0], 'Speak')

@@ -69,8 +69,9 @@ function Update-AssignmentDefaultChoices {
 }
 
 function Set-MessageViewerDefault($row){
-    if(-not $row.Platform -or -not $row.UserId){throw 'This message has no stable viewer identity. Send platform and userId with speech requests.'}
-    [void](Invoke-BridgePost '/api/viewers/set' @{platform=[string]$row.Platform;userId=[string]$row.UserId;displayName=[string]$row.DisplayName;login=[string]$row.User;voice=[string]$row.Alias})
+    $name=if($row.User){[string]$row.User}else{[string]$row.DisplayName}
+    if(-not $name){throw 'This message has no username. Forward the username from Streamer.Bot.'}
+    [void](Invoke-BridgePost '/api/viewers/set' @{username=$name;displayName=$name;login=$name;voice=[string]$row.Alias})
     $BottomStatus.Text='Viewer default set to '+$row.Alias
 }
 
@@ -97,7 +98,8 @@ function Show-ViewerDraft($entry){
     (Get-ViewerControl 'ViewerId').IsReadOnly=[bool]$entry
     (Get-ViewerControl 'ViewerReset').IsEnabled=[bool]$entry
     (Get-ViewerControl 'ViewerVoice').SelectedValue=if($entry){[string]$entry.voice}else{''}
-    if($entry){(Get-ViewerControl 'ViewerStatus').Text=if($entry.platform -eq 'twitch' -and $entry.userId -notmatch '^\d+$'){'This Twitch user ID looks like a username. Click Edit viewer to enter the numeric ID, or assign from a received message.'}elseif($entry.warning){$entry.warning+' — choose another voice or reset.'}else{'Choose a voice below, then Apply assignment. Edit viewer also lets you correct the platform/user ID.'}}
+    (Get-ViewerControl 'ViewerName').Text=if($entry.login){[string]$entry.login}elseif($entry){[string]$entry.displayName}else{''}
+    if($entry){(Get-ViewerControl 'ViewerStatus').Text='Edit the username or voice, then Apply assignment.'}
 }
 
 function Edit-ViewerDraft {
@@ -105,7 +107,7 @@ function Edit-ViewerDraft {
     $script:viewerOriginalIdentity=@{platform=[string]$entry.platform;userId=[string]$entry.userId}
     (Get-ViewerControl 'ViewerPlatform').IsEnabled=$true
     (Get-ViewerControl 'ViewerId').IsReadOnly=$false
-    (Get-ViewerControl 'ViewerStatus').Text='Edit this viewer below, then Apply assignment. Twitch requires the numeric user ID, not the username. Existing identities cannot be overwritten.'
+    (Get-ViewerControl 'ViewerStatus').Text='Edit the username or voice, then Apply assignment.'
     (Get-ViewerControl 'ViewerVoice').Focus()|Out-Null
 }
 
@@ -122,6 +124,7 @@ function Apply-ViewerList($result){
     foreach($voice in $result.voices){$choices+=[pscustomobject]@{Label=[string]$voice;Value=[string]$voice}}
     $assigned=@($result.viewers|Where-Object{([string]$_.voice).Trim()})
     foreach($entry in $assigned){
+        $entry|Add-Member NoteProperty usernameLabel $(if($entry.login){$entry.login}else{$entry.displayName}) -Force
         $entry|Add-Member NoteProperty voiceLabel $(if($entry.voice){$entry.voice}else{'Default'}) -Force
         $entry|Add-Member NoteProperty status $(if(-not $entry.available){'Unavailable'}elseif($entry.voice){'Assigned'}else{'Default'}) -Force
         if($entry.voice -and $entry.voice -notin $choices.Value){$choices+=[pscustomobject]@{Label=$entry.voice+' (unavailable)';Value=$entry.voice}}
@@ -130,7 +133,7 @@ function Apply-ViewerList($result){
     $list.ItemsSource=$assigned;Set-ViewerSearch
     $selected=@($assigned|Where-Object{$old -and $_.platform -eq $old.platform -and $_.userId -ceq $old.userId})[0]
     $list.SelectedItem=$selected;Show-ViewerDraft $selected
-    if(-not $selected){(Get-ViewerControl 'ViewerStatus').Text='Only viewers with a special voice assignment appear here. Assign from a message in Queue/recent speech, or Add viewer using the real platform user ID. Reset removes an assignment from this list.'}
+    if(-not $selected){(Get-ViewerControl 'ViewerStatus').Text='Enter a username and choose a voice. Matching ignores capitalization and applies across platforms. Only special voice assignments appear here.'}
 }
 
 function Start-ViewerLoad {
@@ -147,11 +150,11 @@ function Start-ViewerLoad {
 
 function Save-ViewerAssignment([bool]$reset=$false){
     try{
-        $platform=[string](Get-ViewerControl 'ViewerPlatform').SelectedValue
-        if(-not $platform){throw 'Choose a platform from the dropdown.'}
-        if($platform -eq 'twitch' -and (Get-ViewerControl 'ViewerId').Text -notmatch '^\d+$'){throw 'Twitch requires the numeric user ID, not a username. Send a message with the assignment-aware Streamer.Bot template, then select its viewer record.'}
-        $body=@{platform=$platform;userId=(Get-ViewerControl 'ViewerId').Text;displayName=(Get-ViewerControl 'ViewerName').Text;voice=$(if($reset){''}else{(Get-ViewerControl 'ViewerVoice').SelectedValue})}
-        if($script:viewerOriginalIdentity){$body.originalIdentity=$script:viewerOriginalIdentity}
+        $name=(Get-ViewerControl 'ViewerName').Text.Trim().TrimStart('@')
+        if(-not $name){throw 'Enter the viewer username.'}
+        $body=@{username=$name;displayName=$name;login=$name;voice=$(if($reset){''}else{(Get-ViewerControl 'ViewerVoice').SelectedValue})}
+        $selected=(Get-ViewerControl 'ViewerList').SelectedItem
+        if($selected){$body.originalIdentity=@{platform=[string]$selected.platform;userId=[string]$selected.userId}}
         [void](Invoke-BridgePost '/api/viewers/set' $body)
         (Get-ViewerControl 'ViewerStatus').Text='Viewer assignment saved in the app data folder.'
         Start-ViewerLoad
@@ -160,6 +163,9 @@ function Save-ViewerAssignment([bool]$reset=$false){
 
 function Install-YapLoqViewers {
     $script:viewerPage=Load-Xaml (Join-Path $resourceRoot 'assets\Viewers.xaml')
+    $viewerColumns=(Get-ViewerControl 'ViewerList').Columns
+    $viewerColumns[0].Header='USERNAME';$viewerColumns[0].Binding=[Windows.Data.Binding]::new('usernameLabel')
+    $viewerColumns[1].Visibility='Collapsed';$viewerColumns[2].Visibility='Collapsed'
     $page=[Windows.Controls.Grid]::new();$page.Visibility='Collapsed'
     $headerRow=[Windows.Controls.RowDefinition]::new();$headerRow.Height='Auto';[void]$page.RowDefinitions.Add($headerRow);[void]$page.RowDefinitions.Add([Windows.Controls.RowDefinition]::new())
     [Windows.Controls.Grid]::SetRow($page,2);[void]$script:shellContent.Children.Add($page)
@@ -242,7 +248,7 @@ function Install-YapLoqViewers {
     $picker=Get-ViewerControl 'ViewerVoice';$picker.DisplayMemberPath=''
     $picker.ItemTemplate=[Windows.Markup.XamlReader]::Parse('<DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><TextBlock Text="{Binding Label}" TextTrimming="CharacterEllipsis"/></DataTemplate>')
     (Get-ViewerControl 'ViewerList').Add_SizeChanged({param($sender,$e)
-        if($sender.ActualWidth -gt 0){$space=[Math]::Max(260,$sender.ActualWidth-355);$sender.Columns[0].Width=[Windows.Controls.DataGridLength]::new($space*0.45);$sender.Columns[3].Width=[Windows.Controls.DataGridLength]::new($space*0.55)}
+        if($sender.ActualWidth -gt 0){$space=[Math]::Max(260,$sender.ActualWidth-140);$sender.Columns[0].Width=[Windows.Controls.DataGridLength]::new($space*0.45);$sender.Columns[3].Width=[Windows.Controls.DataGridLength]::new($space*0.55)}
     })
     foreach($column in (Get-ViewerControl 'ViewerList').Columns){$column.ElementStyle=$window.FindResource('GridText')}
     (Get-ViewerControl 'ViewerSearch').Add_TextChanged({Set-ViewerSearch})
@@ -254,6 +260,6 @@ function Install-YapLoqViewers {
     (Get-ViewerControl 'ViewerList').Add_MouseDoubleClick({Edit-ViewerDraft})
     (Get-ViewerControl 'ViewerReset').Add_Click({Save-ViewerAssignment $true})
     $RefreshButton.Add_Click({if($script:activePage -eq 'assignments'){Start-ViewerLoad}})
-    Install-YapLoqItemMenu (Get-ViewerControl 'ViewerList') @(@('Edit viewer',(Get-ViewerControl 'ViewerEdit')),@('Delete assignment',(Get-ViewerControl 'ViewerDelete')),@('Add viewer',(Get-ViewerControl 'ViewerNew'),'global'),@('Reset assignment',(Get-ViewerControl 'ViewerReset')), @('Copy user ID','copy:userId'))
+    Install-YapLoqItemMenu (Get-ViewerControl 'ViewerList') @(@('Edit viewer',(Get-ViewerControl 'ViewerEdit')),@('Delete assignment',(Get-ViewerControl 'ViewerDelete')),@('Add viewer',(Get-ViewerControl 'ViewerNew'),'global'),@('Reset assignment',(Get-ViewerControl 'ViewerReset')), @('Copy username','copy:login'))
     Show-ViewerDraft $null
 }

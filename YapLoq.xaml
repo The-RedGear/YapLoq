@@ -4,7 +4,7 @@
   <Style TargetType="ToolTip">
    <Setter Property="Foreground" Value="#F6F3FA"/><Setter Property="Background" Value="#282231"/><Setter Property="BorderBrush" Value="#50485C"/>
    <Setter Property="MaxWidth" Value="360"/><Setter Property="Padding" Value="12,8"/>
-   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ToolTip"><Border CornerRadius="8" BorderThickness="1" BorderBrush="{TemplateBinding BorderBrush}" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}"><ContentPresenter TextElement.Foreground="{TemplateBinding Foreground}" TextBlock.TextWrapping="Wrap"/></Border></ControlTemplate></Setter.Value></Setter>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ToolTip"><Border CornerRadius="8" BorderThickness="1" BorderBrush="{TemplateBinding BorderBrush}" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}"><ContentPresenter TextElement.Foreground="{TemplateBinding Foreground}" RecognizesAccessKey="True"><ContentPresenter.Resources><Style TargetType="TextBlock"><Setter Property="TextWrapping" Value="Wrap"/></Style></ContentPresenter.Resources></ContentPresenter></Border></ControlTemplate></Setter.Value></Setter>
   </Style>
   <Style TargetType="ResizeGrip">
    <Setter Property="Width" Value="20"/><Setter Property="Height" Value="20"/><Setter Property="Cursor" Value="SizeNWSE"/>

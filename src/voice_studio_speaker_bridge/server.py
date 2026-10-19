@@ -318,6 +318,10 @@ class BridgeServers:
                             result = {"path": maintenance.export_streamerbot(str(data.get("alias", "")))}
                         elif maintenance_action == 'viewer-command-export':
                             result = {'path': maintenance.export_viewer_command(str(data.get('platform', '')))}
+                        elif maintenance_action == 'streamerbot-pack':
+                            result = {'path': maintenance.export_complete_streamerbot(str(data.get('platform', '')), str(data.get('preset', 'complete')))}
+                        elif maintenance_action == 'streamerbot-voices':
+                            result = {'path': maintenance.export_streamerbot_voices(data.get('aliases'))}
                         elif maintenance_action == 'validate-actions':
                             result = {'rules': validate_rules(data.get('rules'))}
                         else:
@@ -467,7 +471,10 @@ class BridgeServers:
                     raw = self.request[0].decode("utf-8").strip()
                     lines = raw.splitlines()
                     packet_type = lines[0].strip().upper() if lines else ""
-                    if packet_type in {"VSPEAK", "YAPLOQ"}:
+                    if packet_type == 'YAPLOQ' and len(lines) > 1 and lines[1].startswith('command:'):
+                        from .yaploq_payload import parse_payload
+                        command, data = parse_payload(raw)
+                    elif packet_type in {"VSPEAK", "YAPLOQ"}:
                         parts = raw.splitlines(keepends=False)
                         if len(parts) < 3:
                             raise ValueError("VSPEAK packet requires an alias and message")
@@ -559,6 +566,12 @@ class BridgeServers:
                     else:
                         data = json.loads(raw)
                         command = str(data.get("command", ""))
+                    metadata = str(data.get('role') or '')
+                    if packet_type in {'YAPLOQ2', 'VSPEAK2', 'YAPLOQVOICE', 'VVOICE'} and metadata.startswith('YAPLOQMETA|'):
+                        _, owner_id, groups = (metadata.split('|', 2) + ['', ''])[:3]
+                        data['role'] = ''
+                        data['isBroadcaster'] = bool(owner_id and not owner_id.startswith('%') and owner_id == str(data.get('userId') or ''))
+                        data['groups'] = [name.strip() for name in groups.split(',') if name.strip() and not name.strip().startswith('%')][:100]
                     bridge.protocol.execute(command, data)
                     accepted = True
                 except Exception as exc:

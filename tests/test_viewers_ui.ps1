@@ -1,4 +1,4 @@
-param([string]$OutputDirectory='')
+param([string]$OutputDirectory='',[switch]$KeepOpen)
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName PresentationFramework,PresentationCore,WindowsBase,System.Xaml,System.Windows.Forms,System.Drawing,System.Security
 $appRoot=Split-Path -Parent $PSScriptRoot;$resourceRoot=$appRoot
@@ -43,7 +43,7 @@ function Invoke-BridgePost([string]$path,$body=@{}){$script:viewerSaved=$body;[p
 $click=[Windows.Controls.Button]::ClickEvent
 (Get-ViewerControl 'ViewerVoice').SelectedValue='playlist:Characters'
 (Get-ViewerControl 'ViewerSave').RaiseEvent([Windows.RoutedEventArgs]::new($click))
-if($script:viewerSaved.voice -ne 'playlist:Characters' -or $script:viewerSaved.userId -ne '123'){throw 'Assignment save failed'}
+if($script:viewerSaved.voice -ne 'playlist:Characters' -or $script:viewerSaved.username -ne 'viewer'){throw 'Username assignment save failed'}
 (Get-ViewerControl 'ViewerReset').RaiseEvent([Windows.RoutedEventArgs]::new($click))
 if($script:viewerSaved.voice -ne ''){throw 'Reset did not clear the assignment'}
 function Show-AppConfirmation($owner,$message,$title){return $true}
@@ -51,15 +51,21 @@ function Show-AppConfirmation($owner,$message,$title){return $true}
 if($script:viewerSaved.userId -ne '123' -or $script:viewerSaved.platform -ne 'twitch'){throw 'Delete did not target selected viewer'}
 (Get-ViewerControl 'ViewerEdit').RaiseEvent([Windows.RoutedEventArgs]::new($click))
 if((Get-ViewerControl 'ViewerId').IsReadOnly -or -not (Get-ViewerControl 'ViewerPlatform').IsEnabled){throw 'Edit viewer did not unlock identity correction'}
-(Get-ViewerControl 'ViewerId').Text='456'
+(Get-ViewerControl 'ViewerName').Text='AnotherViewer'
 (Get-ViewerControl 'ViewerSave').RaiseEvent([Windows.RoutedEventArgs]::new($click))
-if($script:viewerSaved.userId -ne '456' -or $script:viewerSaved.originalIdentity.userId -ne '123'){throw 'Identity correction lost the original record key'}
+if($script:viewerSaved.username -ne 'AnotherViewer' -or $script:viewerSaved.originalIdentity.userId -ne '123'){throw 'Username edit lost the original record key'}
 $savedRequest=$script:viewerSaved
-(Get-ViewerControl 'ViewerId').Text='username-not-id'
+(Get-ViewerControl 'ViewerName').Text=''
 (Get-ViewerControl 'ViewerSave').RaiseEvent([Windows.RoutedEventArgs]::new($click))
-if($script:viewerSaved -ne $savedRequest -or (Get-ViewerControl 'ViewerStatus').Text -notlike '*numeric user ID*'){throw 'Twitch username was accepted as a stable ID'}
+if($script:viewerSaved -ne $savedRequest -or (Get-ViewerControl 'ViewerStatus').Text -notlike '*Enter the viewer username*'){throw 'Empty username was accepted'}
 Set-MessageViewerDefault ([pscustomobject]@{Platform='youtube';UserId='AbC';DisplayName='Viewer';User='viewer';Alias='EventVoice'})
-if($script:viewerSaved.platform -ne 'youtube' -or $script:viewerSaved.userId -cne 'AbC'){throw 'Message context assignment lost stable identity'}
+if($script:viewerSaved.username -ne 'viewer'){throw 'Message context assignment lost username'}
+(Get-ViewerControl 'ViewerNew').RaiseEvent([Windows.RoutedEventArgs]::new($click))
+(Get-ViewerControl 'ViewerName').Text='NewViewer'
+(Get-ViewerControl 'ViewerVoice').SelectedValue='EventVoice'
+(Get-ViewerControl 'ViewerSave').RaiseEvent([Windows.RoutedEventArgs]::new($click))
+if($script:viewerSaved.username -ne 'NewViewer' -or $script:viewerSaved.ContainsKey('originalIdentity')){throw 'Adding a username required an ID or retained old identity'}
+if((Get-ViewerControl 'ViewerList').Columns[1].Visibility -ne 'Collapsed' -or (Get-ViewerControl 'ViewerName').Parent.Visibility -ne 'Visible'){throw 'Username editor was not simplified'}
 $window.WindowStartupLocation='Manual';$window.Left=-20000;$window.Top=-20000;$window.ShowInTaskbar=$false;$window.Show()
 $script:assignmentDefaultPicker.SelectedItem='EventVoice';Save-AssignmentDefault
 if((Read-Settings).assignment_default_voice -ne 'EventVoice'){throw 'Default assignment was not persisted'}
@@ -99,11 +105,10 @@ Update-AliasChoiceAppearance
 if($picker.SelectedValue -ne 'EventVoice'){throw 'Appearance refresh changed the saved selector value'}
 (Get-ViewerControl 'ViewerNew').RaiseEvent([Windows.RoutedEventArgs]::new($click))
 if((Get-ViewerControl 'ViewerId').IsReadOnly -or (Get-ViewerControl 'ViewerId').Text){throw 'Add viewer did not create an editable blank identity'}
-(Get-ViewerControl 'ViewerPlatform').SelectedValue='kick'
-(Get-ViewerControl 'ViewerId').Text='kick-user-id'
+(Get-ViewerControl 'ViewerName').Text='KickViewer'
 (Get-ViewerControl 'ViewerSave').RaiseEvent([Windows.RoutedEventArgs]::new($click))
-if($script:viewerSaved.platform -ne 'kick'){throw 'Platform dropdown did not save canonical Kick identity'}
+if($script:viewerSaved.username -ne 'KickViewer'){throw 'Name-only assignment did not save'}
 Show-ViewerDraft ([pscustomobject]@{platform='custom-network';userId='id';displayName='Saved viewer';voice='';warning='';assignmentOrigin='Default'})
 if((Get-ViewerControl 'ViewerPlatform').SelectedValue -ne 'custom-network'){throw 'Existing unlisted platform assignment was lost'}
-$window.Close()
+if(-not $KeepOpen){$window.Close()}
 'Viewer UI passed: route, stable identity, search, assignment, reset, message context and three sizes.'

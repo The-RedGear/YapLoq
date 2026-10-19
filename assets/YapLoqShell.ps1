@@ -2,6 +2,8 @@
 . (Join-Path $resourceRoot 'assets\Automations.ps1')
 . (Join-Path $resourceRoot 'assets\Viewers.ps1')
 . (Join-Path $resourceRoot 'assets\AliasChoices.ps1')
+. (Join-Path $resourceRoot 'assets\ServiceConnections.ps1')
+. (Join-Path $resourceRoot 'assets\StreamerBotPack.ps1')
 function Register-YapLoqControlMotion($root) {
     # Popup children have their own presentation source and cannot inherit a page transition.
     $selector = $root
@@ -688,10 +690,12 @@ function Install-YapLoqDashboard {
 
 function Install-YapLoqVoiceContextMenu {
     $menu=[Windows.Controls.ContextMenu]::new()
-    foreach($action in @(@('Edit voice','EditButton'),@('Test voice','TestButton'),@('Favorite','ToggleFavoriteButton'),@('Duplicate voice','duplicate'),@('Remove voice','RemoveButton'))) {
+    foreach($action in @(@('Edit voice','EditButton'),@('Test voice','TestButton'),@('Favorite','ToggleFavoriteButton'),@('Duplicate voice','duplicate'),@('Remove voice','RemoveButton'),@('Export selected voices to Streamer.Bot','export-streamerbot'))) {
         $item=[Windows.Controls.MenuItem]::new();$item.Header=$action[0];$item.Tag=$action[1]
         $item.Add_Click({param($sender,$e)
             $row=$AliasGrid.SelectedItem;if(-not$row){return}
+            if($sender.Tag -eq 'export-streamerbot'){Export-SelectedStreamerBotVoices;return}
+            if($AliasGrid.SelectedItems.Count -ne 1){return}
             if($sender.Tag -eq 'duplicate') {
                 try {
                     $settings=Read-Settings
@@ -711,7 +715,7 @@ function Install-YapLoqVoiceContextMenu {
     }
     $menu.Add_Opened({
         $row=$AliasGrid.SelectedItem
-        foreach($item in $AliasGrid.ContextMenu.Items){$item.IsEnabled=$null -ne $row;if($item.Tag -eq 'ToggleFavoriteButton'){$item.Header=if($row -and $row.Favorite){'Unfavorite'}else{'Favorite'}}}
+        foreach($item in $AliasGrid.ContextMenu.Items){$item.IsEnabled=if($item.Tag -eq 'export-streamerbot'){$AliasGrid.SelectedItems.Count -gt 0}else{$AliasGrid.SelectedItems.Count -eq 1};if($item.Tag -eq 'ToggleFavoriteButton'){$item.Header=if($row -and $row.Favorite){'Unfavorite'}else{'Favorite'}}}
     })
     $AliasGrid.ContextMenu=$menu
     $AliasGrid.Add_PreviewMouseRightButtonDown({param($sender,$e)
@@ -719,7 +723,7 @@ function Install-YapLoqVoiceContextMenu {
         while($node -and $node -isnot [Windows.Controls.DataGridRow]){
             if($node -is [Windows.Media.Visual]){$node=[Windows.Media.VisualTreeHelper]::GetParent($node)}else{$node=$null}
         }
-        if($node){$node.IsSelected=$true}else{$AliasGrid.SelectedItem=$null}
+        if($node){if(-not $node.IsSelected){$AliasGrid.SelectedItems.Clear();$node.IsSelected=$true}}else{$AliasGrid.SelectedItems.Clear()}
     })
 }
 
@@ -1183,7 +1187,7 @@ function Add-YapLoqServiceHelp($page, [string]$text, [string]$url) {
 function Update-YapLoqPendingServiceStatus([string]$id,[string]$name,[string]$page,[bool]$enabled) {
     $rows = [Collections.ArrayList]::new()
     foreach ($row in @($script:serviceHealthRows)) { if ($row.Id -ne $id) { [void]$rows.Add($row) } }
-    if ($enabled) { [void]$rows.Add([pscustomobject]@{Id=$id;Name=$name;State='warn';Page=$page;Detail='Enabled - save to apply'}) }
+    if ($enabled) { [void]$rows.Add([pscustomobject]@{Id=$id;Name=$name;State='bad';Page=$page;Detail='Offline - test connection'}) }
     Apply-ServiceStatusSummary @($rows)
     if ($script:statusFlyout -and $script:statusFlyout.Visibility -eq 'Visible') { Render-ServiceStatusMenu @($rows) }
 }
@@ -1244,7 +1248,7 @@ function Install-YapLoqStreamerExpanders {
             $intro=[Windows.Controls.TextBlock]::new();$intro.Text='Send messages from Streamer.Bot to YapLoq.';$intro.TextWrapping='Wrap';$intro.Foreground=$window.FindResource('Muted');$intro.Margin='0,6,0,12';[void]$steps.Children.Add($intro)
             foreach($step in @(
                 @('1. Enable the listener','In Connection, enable incoming UDP speech and save. Restart YapLoq after changing listener settings.','Open Connection','connection','mdi:lan-connect'),
-                @('2. Import the speech actions','Choose a voice in Action export and export. In Streamer.Bot, click Import, paste the copied code into Import String, then import.','Open Action export','export','mdi:package-variant-closed'),
+                @('2. Import the complete pack','Open Import pack, copy the code, then paste into Streamer.Bot > Import > Import String. Choose one chat handler to avoid duplicate speech.','Open Import pack','export','mdi:package-variant-closed'),
                 @('3. Test from Streamer.Bot','On YapLoq - Speak, add a Core > Test trigger with a message argument, then run Test Trigger. Check YapLoq Queue for the message.','Open Queue','queue','mdi:playlist-play')
             )) {
                 $row=[Windows.Controls.Grid]::new();$row.Margin='0,0,0,10';$row.ColumnDefinitions.Add([Windows.Controls.ColumnDefinition]::new());$column=[Windows.Controls.ColumnDefinition]::new();$column.Width='Auto';$row.ColumnDefinitions.Add($column)
@@ -1256,7 +1260,8 @@ function Install-YapLoqStreamerExpanders {
                 $button.Resources['SectionShortcut']=$true
                 $button.Add_Click({param($sender,$e)
                     if($sender.Tag -eq 'queue'){Request-YapLoqPage 'queue';return}
-                    $target=switch($sender.Tag){'connection'{$UdpBox};'export'{$ExportVoiceAliasBox};'playback'{$EnableStreamerBotActionsCheck}}
+                    if($sender.Tag -eq 'export'){Set-Page 'streamerPack';return}
+                    $target=switch($sender.Tag){'connection'{$UdpBox};'playback'{$EnableStreamerBotActionsCheck}}
                     $ancestor=$target
                     while($ancestor){if($ancestor -is [Windows.Controls.Expander]){$ancestor.IsExpanded=$true};$ancestor=$ancestor.Parent}
                     $target.BringIntoView();[void]$target.Focus()
@@ -1602,6 +1607,8 @@ function Install-YapLoqShell {
     Install-YapLoqStreamerExpanders
     Install-YapLoqAutomations
     Install-YapLoqViewers
+    Install-StreamerBotPack
+    Install-SelectedVoiceExport
     Install-AliasChoicePickers
     foreach ($spec in @(@('AudioSettingsExpander','mdi:speaker'),@('LocalApiSettingsExpander','mdi:api'),@('LimitsSettingsExpander','mdi:speedometer'),@('WindowSettingsExpander','mdi:window-maximize'),@('DataSupportSettingsExpander','mdi:database-cog'))) {
         $section=$window.FindName($spec[0]); if(-not $section){continue}
@@ -1613,6 +1620,7 @@ function Install-YapLoqShell {
     }
     Install-YapLoqServiceEnablePreview
     Install-YapLoqCredentialFields
+    Install-ServiceConnectionForms
     $aboutMark = $window.FindName('AboutBrandLogo')
     if ($aboutMark -and $aboutMark.Parent) { $aboutMark.Parent.Visibility = 'Collapsed' }
     Set-YapLoqAccordionWidths $window

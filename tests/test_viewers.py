@@ -24,6 +24,57 @@ def assign(protocol, **changes):
     return protocol.execute('SetViewerVoice', dict(platform='twitch', userId='123', displayName='Same name', voice='Other', **changes))
 
 
+def test_username_assignment_without_platform_or_id(protocol):
+    protocol.execute('SetViewerVoice', dict(username=' @JunkerHan ', login='JunkerHan', voice='Other'))
+    for context in [dict(userName='junkerhan'), dict(platform='kick', userId='456', userName='JUNKERHAN'), dict(user='JunkerHan')]:
+        protocol.execute('Speak', dict(context, message='Hi'))
+        assert protocol.engine.enqueue.call_args.args[1].name == 'Other'
+    protocol.execute('Speak', dict(userName='notjunkerhan', message='Hi'))
+    assert protocol.engine.enqueue.call_args.args[1].name != 'Other'
+    assert protocol.viewers.by_username('JunkerHan')['voice'] == 'Other'
+    assert protocol.execute('DeleteViewerVoice', dict(username='JUNKERHAN'))['deleted']
+
+
+def test_username_rename_and_duplicate_collision(protocol):
+    protocol.execute('SetViewerVoice', dict(username='First', voice='Other'))
+    protocol.execute('SetViewerVoice', dict(username='Second', voice='Other', originalIdentity=dict(username='First')))
+    assert protocol.viewers.by_username('first') is None
+    protocol.execute('SetViewerVoice', dict(username='First', voice='Other'))
+    with pytest.raises(ValueError, match='already exists'):
+        protocol.execute('SetViewerVoice', dict(username='Second', voice='Other', originalIdentity=dict(username='First')))
+
+
+def test_assign_and_speak_uses_new_preference_and_combined_queue_controls(protocol):
+    protocol.execute('AssignAndSpeak', dict(userName='Viewer', voice='Other', message='Hello'))
+    assert protocol.viewers.by_username('Viewer')['voice'] == 'Other'
+    assert protocol.engine.enqueue.call_args.args[1].name == 'Other'
+    protocol.execute('SkipAndResume', {})
+    assert [call[0] for call in protocol.engine.method_calls][-2:] == ['stop_current', 'resume']
+    protocol.execute('ClearAndResume', {})
+    assert [call[0] for call in protocol.engine.method_calls][-2:] == ['clear_all', 'resume']
+
+
+@pytest.mark.parametrize('flag', ['isVip', 'isModerator', 'isBroadcaster'])
+def test_imported_voice_command_works_without_legacy_toggle_or_public_voice_flag(protocol, flag):
+    protocol.settings.viewer_commands_enabled = False
+    result = protocol.execute('AssignVoiceCommand', dict(platform='twitch', userId='123', userName='Viewer', message='other', **{flag: True}))
+    assert result['action'] == 'assigned' and result['voice'] == 'Other'
+    assert protocol.engine.events.emit.call_args.args[0:2] == ('viewer', 'voiceassigned')
+    assert protocol.viewers.by_username('viewer')['voice'] == 'Other'
+    protocol.execute('Speak', dict(platform='youtube', userId='UC-123', userName='VIEWER', message='Hello'))
+    assert protocol.engine.enqueue.call_args.args[1].name == 'Other'
+    result = protocol.execute('AssignVoiceCommand', dict(userName='Viewer', message='reset', **{flag: True}))
+    assert result['action'] == 'reset' and protocol.execute('GetViewers', {})['viewers'] == []
+    assert protocol.engine.events.emit.call_args.args[0:2] == ('viewer', 'voicereset')
+
+
+@pytest.mark.parametrize('metadata', [{}, {'isVip': 'true'}, {'isSubscribed': True}, {'isModerator': False}])
+def test_regular_viewers_cannot_use_imported_voice_command(protocol, metadata):
+    with pytest.raises(ValueError, match='Only VIPs'):
+        protocol.execute('AssignVoiceCommand', dict(userName='Viewer', message='Other', **metadata))
+    assert protocol.viewers.all() == []
+
+
 def test_assignment_persists_in_data_and_reloads(protocol):
     assign(protocol)
     path = protocol.settings.path.parent / 'viewers.json'
@@ -100,6 +151,37 @@ def test_role_flags_and_structured_custom_groups_choose_defaults(protocol):
     assert protocol.engine.enqueue.call_args.args[1].name == 'Other'
     protocol.execute('Speak', dict(message='Hi', isModerator=True, groups='Special Guests'))
     assert protocol.engine.enqueue.call_args.args[1].name == 'EventVoice'
+
+
+def test_conditional_role_rule_uses_streamerbot_flags_not_only_role_text(protocol):
+    protocol.settings.routing_rules = [dict(field='role', value='moderator', alias='Other', enabled=True)]
+    for event in [dict(isModerator=True), dict(user=dict(isModerator=True)), dict(role='mod')]:
+        protocol.execute('Speak', dict(event, message='Hi'))
+        assert protocol.engine.enqueue.call_args.args[1].name == 'Other'
+    protocol.execute('Speak', dict(isModerator='False', message='Hi'))
+    assert protocol.engine.enqueue.call_args.args[1].name != 'Other'
+
+
+@pytest.mark.parametrize('role,flag', [('vip', 'isVip'), ('moderator', 'isModerator'), ('broadcaster', 'isBroadcaster')])
+def test_each_role_default_and_conditional_uses_its_flag(protocol, role, flag):
+    protocol.settings.role_voice_rules = {role: 'Other'}
+    protocol.execute('Speak', dict(message='Role default', **{flag: True}))
+    assert protocol.engine.enqueue.call_args.args[1].name == 'Other'
+    protocol.settings.role_voice_rules = {}
+    protocol.settings.routing_rules = [dict(field='role', value=role, alias='Other')]
+    protocol.execute('Speak', dict(message='Conditional role', **{flag: True}))
+    assert protocol.engine.enqueue.call_args.args[1].name == 'Other'
+
+
+def test_universal_multistream_speech_uses_assignments_and_roles(protocol):
+    from voice_studio_speaker_bridge.yaploq_payload import speech_payload, parse_payload
+    protocol.execute('SetViewerVoice', dict(username='SharedViewer', voice='Other'))
+    for platform, user_id in [('twitch', '123'), ('youtube', 'UC-channel'), ('kick', '456')]:
+        payload = speech_payload().replace('%userType%', platform).replace('%userId%', user_id).replace('%userName%', 'SharedViewer').replace('%message%', 'Hello')
+        request, data = parse_payload(payload)
+        protocol.execute(request, data)
+        assert protocol.engine.enqueue.call_args.args[1].name == 'Other'
+        assert protocol.engine.enqueue.call_args.kwargs['platform'] == platform
 
 
 def test_playlist_assignment_uses_enabled_members(protocol):

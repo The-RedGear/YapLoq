@@ -141,12 +141,12 @@ def test_platform_templates_include_identity_and_no_auto_triggers(platform):
         assert action['id'] not in normal_ids
         assert action['triggers'] == [] and not action['alwaysRun']
         payload = action['actions'][0]['payload']
-        assert (platform or '%commandSource%') in payload
-        assert all(token in payload for token in ['%userId%', '%userName%', '%role%', '%isSubscribed%', '%isVip%', '%isModerator%'])
+        assert (platform or '%userType%') in payload
+        assert all(token in payload for token in ['%userId%', '%userName%', '%broadcastUserId%', '%userGroups%', '%isSubscribed%', '%isVip%', '%isModerator%'])
     assert actions[0]['actions'][0]['payload'].endswith('!voice %rawInput%')
-    assert actions[1]['actions'][0]['payload'].startswith('YAPLOQ2\r\n\r\n')
+    assert actions[1]['actions'][0]['payload'].startswith('YAPLOQ\r\ncommand:speak\r\n\r\n')
     assert actions[1]['actions'][0]['payload'].endswith('%rawInput%')
-    assert actions[2]['actions'][0]['payload'].startswith('YAPLOQ2\r\n\r\n')
+    assert actions[2]['actions'][0]['payload'].startswith('YAPLOQ\r\ncommand:speak\r\n\r\n')
     assert actions[2]['actions'][0]['payload'].endswith('%message%')
     assert envelope['meta']['autoRunAction'] is None
 

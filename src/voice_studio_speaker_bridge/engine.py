@@ -20,6 +20,7 @@ from time import monotonic
 from .audio import AudioPlayer
 from .events import EventBus
 from .models import SpeechJob, VoiceAlias
+from .multi_voice import strip_chat_tokens
 from .settings import Settings
 from .polly import PollyClient
 from .voicestudio import VoiceStudioClient
@@ -340,11 +341,7 @@ class SpeechEngine:
         return text
 
     def _prepare_text(self, text: str, user: str, *, apply_profanity: bool = True) -> str:
-        text = text.strip()
-        if self.settings.ignore_command_messages:
-            text = re.sub(r"(?<!\S)!\S+", "", text)
-        if self.settings.ignore_mention_messages:
-            text = re.sub(r"(?<!\S)@\S+", "", text)
+        text = strip_chat_tokens(text, self.settings)
         visible = [char for char in text if not char.isspace()]
         if self.settings.block_ascii_art and len(visible) >= 8:
             symbol_count = sum(not char.isalnum() for char in visible)

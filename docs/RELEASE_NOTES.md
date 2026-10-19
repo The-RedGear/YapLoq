@@ -15,7 +15,7 @@ Voice automation for streamers, with a Windows desktop app and Streamer.Bot inte
 
 ### Integration notes
 
-Existing explicit/random-voice Streamer.Bot actions still override assignments. To use viewer defaults, import the assignment-aware templates and attach your own triggers. Custom groups must be supplied as a groups array by Streamer.Bot; YapLoq does not discover group membership automatically. Old name-only requests remain compatible. Existing legacy name rules are preserved but hidden from the role editor.
+One Streamer.Bot import works across Twitch, YouTube and Kick, including multistream setups. Ready-made commands include VIP/mod voice selection and moderator-only playback controls. Existing integrations remain compatible.
 
 ## What's included
 

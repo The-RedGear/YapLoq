@@ -52,4 +52,10 @@ $deadline=[DateTime]::UtcNow.AddSeconds(8)
 while([DateTime]::UtcNow -lt $deadline -and -not $script:liveTestPayload.reset){$window.Dispatcher.Invoke([Action]{},[Windows.Threading.DispatcherPriority]::Background);Start-Sleep -Milliseconds 20}
 if((Read-Settings).max_queue -ne 47 -or -not $script:liveTestPayload.reset){throw 'Save did not persist the active draft and serialize runtime reset'}
 $script:liveSettingsDebounce.Stop();$script:liveSettingsPump.Stop();$script:liveSettingsInstalled=$false
+$VoiceRuleFieldBox.SelectedIndex=0;$VoiceRuleValueBox.Text='moderator';$VoiceRuleAliasBox.SelectedItem='EventVoice'
+Upsert-VoiceRule
+Update-GlobalSaveGroup 'Rules'
+$draft=Get-LiveSettingsDraft
+if($draft.role_voice_rules.moderator -ne 'EventVoice'){throw 'Role editor did not reach the live settings draft'}
+$tip=[Windows.Controls.ToolTip]::new();$tip.Content='Role rule help';$tip.Style=$window.FindResource([Windows.Controls.ToolTip]);$tip.ApplyTemplate()|Out-Null;$tip.Measure([Windows.Size]::new(360,100))
 'Live settings UI passed: staged validation, invalid draft retention, sentence option and Discard.'

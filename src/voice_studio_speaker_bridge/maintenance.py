@@ -239,6 +239,26 @@ class Maintenance:
         destination.write_text(export_viewer_commands(self.settings.udp_port, platform), encoding='utf-8')
         return str(destination)
 
+    def export_complete_streamerbot(self, platform='', preset='complete') -> str:
+        from .streamerbot_export import export_complete_pack
+        self.settings.reload_if_changed()
+        destination = self._folder('exports') / 'YapLoq-complete-pack.sb'
+        destination.write_text(export_complete_pack(self.settings.udp_port, platform,
+                               [alias.name for alias in self.settings.aliases.values() if alias.enabled],
+                               self.settings.voice_playlists.keys(), self.profiles(), preset,
+                               groups=[alias.group for alias in self.settings.aliases.values() if alias.enabled and alias.group]), encoding='utf-8')
+        return str(destination)
+
+    def export_streamerbot_voices(self, aliases) -> str:
+        from .streamerbot_export import export_selected_voices
+        self.settings.reload_if_changed()
+        if not isinstance(aliases, list) or not aliases or any(not isinstance(name, str) or name not in self.settings.aliases for name in aliases):
+            raise ValueError('Select existing saved voices to export')
+        code = export_selected_voices(self.settings.udp_port, aliases, list(self.settings.aliases))
+        destination = self._folder('exports') / 'YapLoq-voices.sb'
+        destination.write_text(code, encoding='utf-8')
+        return str(destination)
+
     @staticmethod
     def preview_speakerbot(data: dict) -> dict:
         """Read alias metadata only. Never read Speaker.bot's credential databases."""

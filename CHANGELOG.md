@@ -8,6 +8,9 @@
 - Global Save/Ctrl+S, live settings, Discard and unsaved-change protection for page/editor drafts.
 - Configuration backup bundles include viewer assignments, with validated restore and recovery copies.
 - Streamer.Bot automation improvements, categorized triggers and separate assignment-aware chat/command templates.
+- One Streamer.Bot import for multistream setups, with selected-voice exports for expanding your voice library.
+- Ready-made VIP/mod voice selection and moderator-only playback commands. Shared speech commands support bracketed voice names.
+- Separate speech actions for chat commands, channel point rewards and chat messages. Command and mention cleanup preserves valid multi-voice speech.
 - Consistent custom popup styling and corrected credential Show/Hide tracking.
 - Fixed packaged Amazon Polly endpoint/service data; packaged-runtime checks now validate AWS models and certificates offline.
 - Dashboard UI checks no longer presume the build runner's monitor size.

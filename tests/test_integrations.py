@@ -15,6 +15,7 @@ from voice_studio_speaker_bridge.providers import Provider, ProviderRegistry
 from voice_studio_speaker_bridge.settings import Settings
 from voice_studio_speaker_bridge.streamerbot import StreamerBotActions
 from voice_studio_speaker_bridge.streamerbot_export import export_actions
+from voice_studio_speaker_bridge.yaploq_payload import speech_payload
 
 
 class IntegrationTests(unittest.TestCase):
@@ -182,23 +183,23 @@ class IntegrationTests(unittest.TestCase):
         actions = envelope["data"]["actions"]
         self.assertEqual(len(actions), 10)
         self.assertTrue(all(not action["triggers"] for action in actions))
-        self.assertEqual(actions[0]["actions"][0]["payload"], "YAPLOQ2\r\nWindows voice\r\n%commandSource%\r\n%userId%\r\n%userName%\r\n%role%\r\n%isSubscribed%\r\n%isVip%\r\n%isModerator%\r\n%message%")
+        self.assertEqual(actions[0]["actions"][0]["payload"], speech_payload('Windows voice'))
         self.assertTrue(all(action["actions"][0]["port"] == 6670 for action in actions))
-        self.assertIn("VCONTROL\r\nclearall", [action["actions"][0]["payload"] for action in actions])
+        self.assertIn("YAPLOQ\r\ncommand:clearall", [action["actions"][0]["payload"] for action in actions])
 
     def test_streamerbot_export_supports_random_voice(self):
         encoded = export_actions(6670, "random")
         envelope = json.loads(gzip.decompress(base64.b64decode(encoded, validate=True)[4:]))
         self.assertEqual(
             envelope["data"]["actions"][0]["actions"][0]["payload"],
-            "YAPLOQ2\r\nrandom\r\n%commandSource%\r\n%userId%\r\n%userName%\r\n%role%\r\n%isSubscribed%\r\n%isVip%\r\n%isModerator%\r\n%message%",
+            speech_payload('random'),
         )
 
     def test_streamerbot_export_can_use_assignments_without_explicit_voice(self):
         encoded = export_actions(6670, '')
         envelope = json.loads(gzip.decompress(base64.b64decode(encoded, validate=True)[4:]))
         self.assertEqual(envelope['data']['actions'][0]['actions'][0]['payload'],
-                         'YAPLOQ2\r\n\r\n%commandSource%\r\n%userId%\r\n%userName%\r\n%role%\r\n%isSubscribed%\r\n%isVip%\r\n%isModerator%\r\n%message%')
+                         speech_payload())
 
     def test_extra_error_hook_runs_before_queue_session_finishes(self):
         self.settings.streamerbot_actions_enabled = True

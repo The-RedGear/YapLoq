@@ -4,6 +4,15 @@ import re
 TAG = re.compile(r'(?<!\\)\[([^\[\]\r\n]{1,64})\]')
 
 
+def strip_chat_tokens(text, settings):
+    """Remove chat-only tokens before they can become empty voice segments."""
+    if settings.ignore_command_messages:
+        text = re.sub(r'(?<!\S)!\S+', '', text)
+    if settings.ignore_mention_messages:
+        text = re.sub(r'(?<!\S)@\S+', '', text)
+    return text.strip()
+
+
 def normalized_voice_name(name):
     return ' '.join(''.join(char if char.isalnum() else ' ' for char in name.casefold()).split())
 

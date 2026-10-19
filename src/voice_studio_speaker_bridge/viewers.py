@@ -9,6 +9,11 @@ from threading import RLock
 
 
 def identity(data: dict) -> tuple[str, str]:
+    if 'username' in data:
+        name = str(data.get('username') or '').strip().removeprefix('@')
+        if not name or len(name) > 128 or any(ord(c) < 32 for c in name) or name.startswith('%'):
+            raise ValueError('Enter a username, up to 128 characters')
+        return 'username', name.casefold()
     raw = data.get('user')
     if isinstance(raw, str) and raw.lstrip().startswith('{'):
         try:
@@ -66,6 +71,10 @@ class ViewerStore:
         with self.lock:
             entry = self._read().get((platform, user_id))
             return dict(entry) if entry else None
+
+    def by_username(self, name: str) -> dict | None:
+        """Explicit name assignments are shared across platforms; never substring match."""
+        return self.get('username', name.strip().removeprefix('@').casefold()) if name else None
 
     def update(self, data: dict, *, assign: bool = False, assignment_source: str = 'admin') -> dict:
         platform, user_id = identity(data)

@@ -9,7 +9,7 @@ from .settings import Settings
 from . import __version__
 from .viewers import ViewerStore, identity
 from .public_voices import eligible_voices, public_label, viewer_roles
-from .multi_voice import split_voices, normalized_voice_name, sentence_clips
+from .multi_voice import split_voices, normalized_voice_name, sentence_clips, strip_chat_tokens
 
 
 import json
@@ -100,6 +100,8 @@ class SpeakerBotProtocol:
         if entry.get('voice'):
             try:
                 self._viewer_choices(entry['voice'])
+                if entry.get('assignmentSource') == 'command':
+                    result['assignmentOrigin'] = 'Viewer command'
                 if entry.get('assignmentSource') == 'viewer':
                     result['assignmentOrigin'] = 'Viewer command'
                     alias = self.settings.aliases.get(entry['voice'])
@@ -163,10 +165,11 @@ class SpeakerBotProtocol:
         return alias
 
     def execute(self, request: str, data: dict) -> dict:
-        if request.casefold() != 'viewervoicecommand':
+        native_voice_command = request.casefold() == 'assignvoicecommand'
+        if request.casefold() != 'viewervoicecommand' and not native_voice_command:
             return self._execute(request, data)
         words = str(data.get('message') or '').strip().split(maxsplit=1)
-        if not words or words[0].casefold() != '!voice':
+        if not native_voice_command and (not words or words[0].casefold() != '!voice'):
             return dict(handled=False)
         display, login = _parse_streamerbot_user(data.get('user', data.get('displayName', '')))
         context = dict(id=str(uuid.uuid4()), source='Streamer.bot', user=display or login,
@@ -181,7 +184,7 @@ class SpeakerBotProtocol:
         except (ValueError, OSError) as exc:
             # Never include raw chat input or private alias names in the result event.
             message = str(exc) if isinstance(exc, ValueError) else 'Could not save your voice. Please try again.'
-            context.update(error=message, reply=message, reason=('disabled' if not self.settings.viewer_commands_enabled else
+            context.update(error=message, reply=message, reason=('disabled' if not native_voice_command and not self.settings.viewer_commands_enabled else
                            'identity' if not context['userId'] else 'storage' if isinstance(exc, OSError) else 'unavailable'))
             self.engine.events.emit('viewer', 'commandfailed', context)
             raise
@@ -191,12 +194,49 @@ class SpeakerBotProtocol:
             context.update(reply=result.get('reply', ''), publicVoice=result.get('voice', ''),
                            operation=action, voices=result.get('voices', []))
             if action == 'assigned':
-                context['alias'] = self.viewers.get(context['platform'], context['userId']).get('voice', '')
+                if native_voice_command:
+                    context['alias'] = result.get('voice', '')
+                else:
+                    context['alias'] = self.viewers.get(context['platform'], context['userId']).get('voice', '')
             self.engine.events.emit('viewer', event, context)
         return dict(result, requestId=context['id'])
 
     def _execute(self, request: str, data: dict) -> dict:
         normalized = request.lower()
+        if normalized == 'assignvoicecommand':
+            self.settings.reload_if_changed()
+            if not viewer_roles(data).intersection({'vip', 'moderator', 'broadcaster'}):
+                raise ValueError('Only VIPs, moderators and the broadcaster can choose a voice.')
+            display, login = _parse_streamerbot_user(data.get('userName') or data.get('user') or '')
+            username = login or display
+            identity(dict(username=username))
+            argument = str(data.get('message') or '').strip()
+            if argument in ('%ylArgs%', '%rawInput%'):
+                argument = ''
+            if not argument or argument.casefold() == 'list':
+                names = [alias.name for alias in self.settings.aliases.values() if alias.enabled]
+                return dict(handled=True, action='list', voices=names, reply=('Available voices: ' + ', '.join(names))[:400])
+            selector = argument
+            if argument.casefold() == 'reset':
+                selector = ''
+            else:
+                matches = [alias.name for alias in self.settings.aliases.values() if alias.enabled and normalized_voice_name(alias.name) == normalized_voice_name(argument)]
+                if len(matches) == 1:
+                    selector = matches[0]
+                elif argument.casefold() == 'random':
+                    selector = 'random'
+                self._viewer_choices(selector)
+            with self.viewers.lock:
+                self.viewers.update(dict(username=username, displayName=username, login=username, voice=selector), assign=True, assignment_source='command')
+                if not selector:
+                    try:
+                        key = identity(data)
+                    except ValueError:
+                        key = None
+                    if key and self.viewers.get(*key):
+                        self.viewers.update(dict(platform=key[0], userId=key[1], voice=''), assign=True)
+            return dict(handled=True, action='assigned' if selector else 'reset', voice=selector,
+                        reply=('Your voice is now ' + selector + '.') if selector else 'Your voice now follows the default voice rules.')
         if normalized in {'getpublicvoices', 'viewervoicecommand'}:
             self.settings.reload_if_changed()
             choices = eligible_voices(self.settings, data)
@@ -247,6 +287,17 @@ class SpeakerBotProtocol:
             else:
                 entry = self.viewers.get(platform, user_id) or dict(platform=platform, userId=user_id, displayName='', login='', voice='')
             return self._viewer_info(entry)
+        if normalized == 'assignandspeak':
+            username = str(data.get('userName') or data.get('user') or '').strip()
+            self.execute('SetViewerVoice', dict(username=username, login=username, displayName=username, voice=data.get('voice', '')))
+            return self.execute('Speak', dict(data, voice=''))
+        if normalized in {'skipandresume', 'clearandresume'}:
+            if normalized == 'skipandresume':
+                self.engine.stop_current()
+            else:
+                self.engine.clear_all()
+            self.engine.resume()
+            return {}
         if normalized == "speak":
             self.settings.reload_if_changed()
             text = str(data.get("message", "")).strip()
@@ -267,6 +318,8 @@ class SpeakerBotProtocol:
             except ValueError:
                 pass  # Name-only legacy speech does not create a stable identity.
             saved_viewer = self.viewers.get(*viewer_key) if viewer_key else None
+            # An explicit username assignment takes precedence over legacy ID records.
+            saved_viewer = self.viewers.by_username(user_login or user_display) or saved_viewer
             viewer_voice = None
             if not alias_name and saved_viewer and saved_viewer.get('voice'):
                 try:
@@ -301,6 +354,7 @@ class SpeakerBotProtocol:
             user_keys = tuple(dict.fromkeys(value.casefold() for value in (user_login, user_display, user) if value))
             priority_matched = False
             routed_voice = ''
+            roles = viewer_roles(data)
             for rule in self.settings.routing_rules:
                 if rule.get("enabled", True) is False:
                     continue
@@ -308,6 +362,8 @@ class SpeakerBotProtocol:
                 rule_value = str(rule.get("value", "")).casefold()
                 if field == "user":
                     matched = bool(rule_value) and rule_value in user_keys
+                elif field == 'role':
+                    matched = rule_value.strip() in roles
                 else:
                     actual = {"role": role, "source": source, "event": str(data.get("event", ""))}.get(field)
                     matched = actual is not None and actual.casefold() == rule_value
@@ -325,7 +381,7 @@ class SpeakerBotProtocol:
                 if rule_alias:
                     break
             if not rule_alias:
-                roles = viewer_roles(data) | {role}
+                roles = viewer_roles(data)
                 groups = data.get('groups', [])
                 groups = {value.strip().casefold() for value in groups if isinstance(value, str)} if isinstance(groups, list) else set()
                 for key, selector in self.settings.role_voice_rules.items():
@@ -370,7 +426,7 @@ class SpeakerBotProtocol:
             metadata = dict(platform=viewer_key[0], user_id=viewer_key[1], display_name=user) if viewer_key else {}
             if priority:
                 metadata['priority'] = priority
-            if viewer_key and saved_viewer and saved_viewer.get('voice'):
+            if viewer_key and saved_viewer and saved_viewer.get('voice') and saved_viewer.get('platform') != 'username':
                 self.viewers.update(dict(platform=viewer_key[0], userId=viewer_key[1], displayName=user_display, login=user_login))
             def tagged_alias(name):
                 all_enabled = bool(viewer_key and self.settings.chat_voice_tags_all_enabled)
@@ -404,6 +460,10 @@ class SpeakerBotProtocol:
                         raise ValueError(f'Voice tag [{name}] was not found. Use the full alias name from Voices.')
                     raise ValueError('A voice tag is unavailable. Check its name, enabled state and chat voice-tag access setting.')
                 return replace(selected, **overrides) if overrides else selected
+            # Strip prefixes before splitting: a command-only intro must not
+            # become an empty segment that rejects otherwise valid speech.
+            if not alias.ssml:
+                text = strip_chat_tokens(text, self.settings)
             segments = split_voices(text, alias, tagged_alias)
             if len(segments) > 1 and any(voice.ssml for _, voice in segments):
                 raise ValueError('Multi-voice input currently supports plain text, not SSML')

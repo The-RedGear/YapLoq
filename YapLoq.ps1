@@ -1261,12 +1261,18 @@ function Build-ServiceHealthRows([bool]$online, $voices, $errors) {
                 } else { $enabled = [bool]$raw }
             } catch { $enabled = $false }
         }
+        $form=if($script:serviceForms){$script:serviceForms[[string]$meta.Id]}else{$null}
+        if($form){$enabled=[bool]$form.Enabled.IsChecked}
         if (-not $enabled) { continue }
-        $state = 'warn'
-        $detail = 'No voices yet'
+        $state = 'bad'
+        $detail = 'Offline - test connection'
         if (-not $online) {
             $state = 'bad'
             $detail = 'Bridge offline'
+        } elseif ($form -and $form.State -eq 'connecting') {
+            $state='warn';$detail='Connecting...'
+        } elseif ($form -and $form.State -ne 'connected') {
+            $state='bad';$detail='Offline - test connection'
         } elseif ($failed.ContainsKey([string]$meta.Name)) {
             $state = 'bad'
             $detail = 'Check credentials'
@@ -1289,7 +1295,8 @@ function Apply-ServiceStatusSummary($rows) {
     $ok = @($list | Where-Object { $_.State -eq 'ok' }).Count
     $bad = @($list | Where-Object { $_.State -eq 'bad' }).Count
     $total = $list.Count
-    $summaryState = if ($bad -eq 0 -and $ok -eq $total) { 'ok' } elseif ($ok -eq 0) { 'bad' } else { 'warn' }
+    $connecting=@($list|Where-Object{$_.Detail -eq 'Connecting...'}).Count -gt 0
+    $summaryState = if ($connecting) { 'warn' } elseif ($bad -eq 0 -and $ok -eq $total) { 'ok' } elseif ($ok -eq 0) { 'bad' } else { 'warn' }
     $label = switch ($summaryState) {
         'ok' { 'Connected' }
         'warn' { if ($script:statusFlyout) { 'Partial' } else { 'Partially Connected' } }
@@ -1593,6 +1600,7 @@ function Refresh-Grid([switch]$VoicesOnly) {
     $pending=if(Get-Command Get-GlobalPendingSnapshots -ErrorAction SilentlyContinue){@(Get-GlobalPendingSnapshots)}else{@()}
     try{
     $selectedAliasName=if($AliasGrid.SelectedItem){[string]$AliasGrid.SelectedItem.Name}else{''}
+    $selectedAliasNames=@($AliasGrid.SelectedItems|ForEach-Object{[string]$_.Name})
     $selectedEngine=[string]$AliasProviderFilter.SelectedItem
     $selectedPlayVoice=[string]$PlayVoiceList.SelectedItem
     $selectedPronunciationVoice=[string]$PronunciationVoiceList.SelectedItem
@@ -1638,6 +1646,9 @@ function Refresh-Grid([switch]$VoicesOnly) {
     if($selectedEngine -and $AliasProviderFilter.Items.Contains($selectedEngine)){$AliasProviderFilter.SelectedItem=$selectedEngine}
     Filter-VoiceAliases
     if($selectedAliasName){$AliasGrid.SelectedItem=@($rows | Where-Object {$_.Name -eq $selectedAliasName})[0]}
+    if($AliasGrid.SelectionMode -eq 'Extended'){
+        foreach($selectedRow in $rows){if($selectedRow.Name -in $selectedAliasNames -and $AliasGrid.Items.Contains($selectedRow) -and -not $AliasGrid.SelectedItems.Contains($selectedRow)){[void]$AliasGrid.SelectedItems.Add($selectedRow)}}
+    }
     $PlayVoiceList.Items.Clear(); $PronunciationVoiceList.Items.Clear()
     foreach ($row in $rows) { [void]$PlayVoiceList.Items.Add($row.Name); [void]$PronunciationVoiceList.Items.Add($row.Name) }
     if($PlayVoiceList.Items.Contains($selectedPlayVoice)){$PlayVoiceList.SelectedItem=$selectedPlayVoice}
@@ -1796,6 +1807,7 @@ function Refresh-Grid([switch]$VoicesOnly) {
     $MinimizeToTrayCheck.IsChecked = $script:minimizeToTray
     $script:loadingSettings = $false
     if($script:credentialFields){Sync-YapLoqCredentialFields}
+    if($script:serviceForms){Update-ServiceConnectionForms}
     }finally{if($pending.Count){Restore-GlobalPendingSnapshots $pending}}
 }
 
@@ -1812,6 +1824,7 @@ function Refresh-Voices {
         }
     }
     if ($script:voiceRefreshTask -and -not $script:voiceRefreshTask.IsCompleted) { return }
+    if(Get-Command Start-ServiceConnectionChecks -ErrorAction SilentlyContinue){Start-ServiceConnectionChecks}
     $BottomStatus.Text = 'Loading voices...'
     $RefreshButton.IsEnabled = $false
     $script:voiceWebClient = [Net.WebClient]::new()
@@ -1832,7 +1845,7 @@ function Refresh-Voices {
             $devices = $null
             if ($script:voiceDeviceTask.IsCompleted) { try { $devices = $script:voiceDeviceTask.GetAwaiter().GetResult() | ConvertFrom-Json } catch {} }
             Complete-VoiceRefresh $result $devices
-        } catch { $BottomStatus.Text = 'Could not load voices. Check Services and try again.' }
+        } catch { Complete-ServiceConnectionChecks @() @() $true;Update-BridgeStatus $false;$BottomStatus.Text = 'Could not load voices. Check Services and try again.' }
         finally { $script:voiceWebClient.Dispose(); $script:voiceDeviceClient.CancelAsync(); $script:voiceDeviceClient.Dispose(); $RefreshButton.IsEnabled = $true }
     })
     $script:voiceRefreshTimer.Start()
@@ -1880,6 +1893,7 @@ function Complete-VoiceRefresh($result, $deviceResult = $null) {
         $script:backendOnline = $true
         $script:serviceHealthAge = Get-Date
         $script:lastVoiceErrors = @($result.errors)
+        if(Get-Command Complete-ServiceConnectionChecks -ErrorAction SilentlyContinue){Complete-ServiceConnectionChecks @($result.voices) @($result.errors)}
         try {
             Apply-ServiceStatusSummary (Build-ServiceHealthRows $true @($result.voices) @($script:lastVoiceErrors))
         } catch {
@@ -2793,7 +2807,7 @@ function Update-StreamerSpeakPayload {
     if (-not $StreamerPayloadBox -or -not $ExportVoiceAliasBox) { return }
     $alias = Get-ExportSpeakAlias
     if (-not $alias -and [string]$ExportVoiceAliasBox.SelectedItem -ne 'Use assignments') { $alias = 'Your voice alias' }
-    $StreamerPayloadBox.Text = "VSPEAK`r`n$alias`r`n%message%`r`n%displayName%`r`n%userName%"
+    $StreamerPayloadBox.Text = "YAPLOQ`r`ncommand:speak`r`n$alias`r`n%userType%`r`n%userId%`r`n%userName%`r`n%broadcastUserId%`r`n%userGroups%`r`n%isSubscribed%|%userIsSponsor%`r`n%isVip%`r`n%isModerator%`r`n%message%"
 }
 function Export-StreamerBotActions {
     try {
@@ -3058,7 +3072,7 @@ function Update-QueueControlPayload {
     if (-not $item) { return }
     $action = [string]$item.Tag
     $needsId = $action -in @('remove','moveup','movedown')
-    $QueueControlPayloadBox.Text = "VCONTROL`r`n$action" + $(if ($needsId) { "`r`n%ttsId%" } else { '' })
+    $QueueControlPayloadBox.Text = "YAPLOQ`r`ncommand:$action" + $(if ($needsId) { "`r`n%ttsId%" } else { '' })
     $QueueControlHint.Text = if ($needsId) { 'Uses %ttsId% from a YapLoq lifecycle action. You can also replace it with a queue speech ID.' } else { 'This action does not need a queue item ID.' }
 }
 function Test-QueueControl {
@@ -4204,6 +4218,7 @@ function Upsert-VoiceRule([switch]$Replace) {
             $VoiceRulesGrid.ItemsSource.Add($rule)
         }
         $BottomStatus.Text = 'Voice rule changed. Save rules to apply.'
+        if($script:globalSaveInstalled){Queue-GlobalSaveTracking $VoiceRulesGrid}
     } catch { $BottomStatus.Text = $_.Exception.Message }
 }
 $AddVoiceRuleButton.Add_Click({ Upsert-VoiceRule })

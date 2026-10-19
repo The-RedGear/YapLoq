@@ -58,10 +58,10 @@ def test_action_display_names_change_without_replacing_installed_ids():
     encoded = base64.b64decode(export_actions(6670, 'random'))
     envelope = json.loads(gzip.decompress(encoded[4:]))
     action = envelope['data']['actions'][0]
-    assert action['name'] == 'YapLoq - Speak'
+    assert action['name'] == '[YL] - Speak'
     assert action['id'] == str(uuid.uuid5(uuid.NAMESPACE_OID, 'VoxRelay/action/Speak'))
     assert 'VoxRelay' not in json.dumps(envelope)
-    assert action['actions'][0]['payload'].startswith('YAPLOQ2\r\n')
+    assert action['actions'][0]['payload'].startswith('YAPLOQ\r\ncommand:speak\r\n')
 
 
 def test_updater_does_not_advertise_old_product_as_new_release():
