@@ -138,6 +138,29 @@ function Move-AutomationItem([string]$kind,[int]$direction){
     if($kind -eq 'rule'){$script:automationRules=@($items);Refresh-AutomationList $item}else{$script:automationSelected.steps=@($items);Show-AutomationDraft $script:automationSelected;$control.SelectedItem=$item}
 }
 
+function ConvertTo-AutomationActionList($entries){
+    foreach($entry in $entries){
+        if($entry -is [array] -or $entry -is [Collections.IList]){ConvertTo-AutomationActionList $entry;continue}
+        if($entry.id -is [string] -and $entry.name -is [string] -and $entry.id.Trim() -and $entry.name.Trim()){
+            [pscustomobject]@{id=[string]$entry.id;name=[string]$entry.name}
+        }
+    }
+}
+
+function Set-AutomationActionCatalogue($d,$entries){
+    $script:automationRemoteActions=@(ConvertTo-AutomationActionList $entries)
+    $picker=$d.FindName('StepActionPicker');$target=$d.Resources['ActionTargetId']
+    if($target -and $picker.Text -eq $d.Resources['ActionTargetText']){
+        $match=@($script:automationRemoteActions|Where-Object id -eq $target)[0]
+        $d.Resources['ActionMissing']=-not [bool]$match
+        if($match){
+            $d.Resources['FilteringActions']=$true
+            try{$picker.Text=$match.name;$d.Resources['ActionTargetText']=$match.name}finally{$d.Resources['FilteringActions']=$false}
+        }else{$d.FindName('StepStatus').Text='This action is no longer in Streamer.Bot. Choose a replacement.'}
+    }
+    Update-AutomationActionSearch $d
+}
+
 function Update-AutomationActionSearch($d){
     if(-not $d -or $d.Resources['FilteringActions']){return}
     $picker=$d.FindName('StepActionPicker');$typed=$picker.Text
@@ -152,6 +175,7 @@ function Update-AutomationActionSearch($d){
         $picker.ApplyTemplate()|Out-Null;$editor=$picker.Template.FindName('PART_EditableTextBox',$picker)
         $caret=if($editor){$editor.CaretIndex}else{$typed.Length}
         $picker.ItemsSource=@($matches);$picker.Text=$typed
+        if($d.Resources['ActionTargetId']){$picker.SelectedItem=@($matches|Where-Object id -eq $d.Resources['ActionTargetId'])[0];$picker.Text=$typed}
         if($editor){$editor.CaretIndex=[Math]::Min($caret,$typed.Length);$editor.SelectionLength=0}
         $d.FindName('StepSearchStatus').Text=if($count -gt 100){"Showing 100 of $count matches. Keep typing to narrow the list."}elseif($count){"$count matching actions"}else{'No matching actions. You can still enter an exact name or ID.'}
     }finally{$d.Resources['FilteringActions']=$false}
@@ -167,13 +191,12 @@ function Start-AutomationActionLoad($d){
         $d=$script:automationStepDialog;if(-not $d){$sender.Stop();return}
         $task=$d.Resources['RemoteTask'];if(-not $task.IsCompleted){return};$sender.Stop()
         try{
-            $script:automationRemoteActions=@(($task.GetAwaiter().GetResult()|ConvertFrom-Json).result)
-            Update-AutomationActionSearch $d
+            Set-AutomationActionCatalogue $d (($task.GetAwaiter().GetResult()|ConvertFrom-Json).result)
             $cachePath=Join-Path $configDir 'streamerbot-actions-cache.json'
             $json=ConvertTo-Json -InputObject @($script:automationRemoteActions) -Depth 5
             $tempPath=$cachePath+'.tmp';[IO.File]::WriteAllText($tempPath,$json)
             if([IO.File]::Exists($cachePath)){[IO.File]::Replace($tempPath,$cachePath,$null)}else{[IO.File]::Move($tempPath,$cachePath)}
-            $d.FindName('StepStatus').Text=''
+            if(-not $d.Resources['ActionMissing']){$d.FindName('StepStatus').Text=''}
         }catch{$d.FindName('StepStatus').Text='Could not refresh actions. Using saved actions if available; you can still type an exact name or ID. Check Connection to reconnect.'}
         finally{$d.Resources['RemoteClient'].Dispose();$d.Resources.Remove('RemoteTask')}
     });$timer.Start()
@@ -192,18 +215,25 @@ function Show-AutomationStep($existing){
     $dialog.FindName('StepTitleDrag').Add_MouseLeftButtonDown({$script:automationStepDialog.DragMove()})
     $dialog.FindName('StepClose').Add_Click({$script:automationStepDialog.Close()})
     $dialog.Add_KeyDown({param($sender,$e)if($e.Key -eq 'Escape'){$sender.Close()}})
-    if(-not $script:automationRemoteActions.Count){try{$script:automationRemoteActions=@([IO.File]::ReadAllText((Join-Path $configDir 'streamerbot-actions-cache.json'))|ConvertFrom-Json)}catch{}}
+    if(-not $script:automationRemoteActions.Count){try{$cached=[IO.File]::ReadAllText((Join-Path $configDir 'streamerbot-actions-cache.json'))|ConvertFrom-Json;$script:automationRemoteActions=@(ConvertTo-AutomationActionList $cached)}catch{}}
     Update-AutomationActionSearch $dialog
     if($existing){
         $match=@($script:automationRemoteActions|Where-Object{$_.id -eq $existing.action})[0]
-        $dialog.FindName('StepActionPicker').Text=if($match){$match.name}else{[string]$existing.action}
+        $dialog.FindName('StepActionPicker').Text=if($match){$match.name}elseif($existing.label){[string]$existing.label}else{[string]$existing.action}
+        $dialog.Resources['ActionTargetId']=[string]$existing.action
+        $dialog.Resources['ActionTargetText']=$dialog.FindName('StepActionPicker').Text
         Update-AutomationActionSearch $dialog
     }
     $searchTimer=[Windows.Threading.DispatcherTimer]::new();$searchTimer.Interval=[TimeSpan]::FromMilliseconds(140);$dialog.Resources['SearchTimer']=$searchTimer
     $searchTimer.Add_Tick({param($sender,$e)$sender.Stop();$d=$script:automationStepDialog;if($d){Update-AutomationActionSearch $d;$picker=$d.FindName('StepActionPicker');if($picker.IsKeyboardFocusWithin){$picker.IsDropDownOpen=$true}}})
     $dialog.FindName('StepActionPicker').AddHandler([Windows.Controls.TextBox]::TextChangedEvent,[Windows.Controls.TextChangedEventHandler]{param($sender,$e)
         $d=$script:automationStepDialog;if(-not $d -or $d.Resources['FilteringActions']){return}
+        if($d.FindName('StepActionPicker').Text -ne $d.Resources['ActionTargetText']){if($d.Resources['ActionMissing']){$d.FindName('StepStatus').Text=''};$d.Resources.Remove('ActionTargetId');$d.Resources['ActionMissing']=$false}
         $timer=$d.Resources['SearchTimer'];$timer.Stop();$timer.Start()
+    })
+    $dialog.FindName('StepActionPicker').Add_SelectionChanged({param($sender,$e)
+        $d=$script:automationStepDialog;if(-not $d -or $d.Resources['FilteringActions'] -or -not $sender.SelectedItem){return}
+        $d.Resources['ActionTargetId']=[string]$sender.SelectedItem.id;$d.Resources['ActionTargetText']=[string]$sender.SelectedItem.name;$d.Resources['ActionMissing']=$false
     })
     $dialog.Add_Loaded({param($sender,$e)Start-AutomationActionLoad $sender})
     $dialog.FindName('StepSave').Add_Click({
@@ -211,6 +241,7 @@ function Show-AutomationStep($existing){
         try{
             if($d.FindName('StepType').SelectedIndex -eq 1){$seconds=0.0;if(-not [double]::TryParse($d.FindName('StepDelay').Text,[ref]$seconds) -or [double]::IsNaN($seconds) -or [double]::IsInfinity($seconds) -or $seconds -lt 0 -or $seconds -gt 86400){throw 'Enter a delay between 0 and 86400 seconds.'};$script:automationStepResult=[pscustomobject]@{type='delay';seconds=$seconds;enabled=$true}}
             else{
+                if($d.Resources['ActionMissing']){throw 'This action was removed from Streamer.Bot. Choose a replacement before saving.'}
                 $typed=$d.FindName('StepActionPicker').Text.Trim();if(-not $typed){throw 'Type an action name or choose one from the dropdown.'}
                 $matches=@($script:automationRemoteActions|Where-Object{$_.id -eq $typed -or $_.name -eq $typed})
                 $selected=$d.FindName('StepActionPicker').SelectedItem

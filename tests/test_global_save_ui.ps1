@@ -22,8 +22,10 @@ if(-not $script:globalSaveButton.IsEnabled -or $script:globalSaveButton.Effect){
 $cleanBefore=[IO.File]::ReadAllText($configPath)
 Save-AllPendingChanges
 if($BottomStatus.Text -ne 'All changes saved.' -or [IO.File]::ReadAllText($configPath) -ne $cleanBefore){throw 'Clean Save did not acknowledge without unnecessary writes'}
+if($script:globalSaveFeedback.Text -ne 'All changes saved' -or $script:globalSaveFeedback.Visibility -ne 'Visible'){throw 'Clean Save did not show title-bar feedback'}
 $parent=$BridgeStatusButton.Parent
 if($parent.Children.IndexOf($script:globalSaveButton) -ne $parent.Children.IndexOf($BridgeStatusButton)-1){throw 'Global Save is not left of service status'}
+if($parent.Children.IndexOf($script:globalSaveFeedback) -ne $parent.Children.IndexOf($script:globalSaveButton)-1){throw 'Save feedback is not left of Save'}
 $MaxQueueSettingBox.Text='44'
 $ElevenLabsEnabledCheck.IsChecked=-not [bool]$ElevenLabsEnabledCheck.IsChecked
 Update-GlobalSaveGroup 'Settings';Update-GlobalSaveGroup 'ElevenLabs'
@@ -37,12 +39,14 @@ Save-AllPendingChanges
 $saved=Read-Settings
 if($saved.max_queue -ne 44 -or $saved.elevenlabs_enabled -ne [bool]$ElevenLabsEnabledCheck.IsChecked){throw ('Global save lost edits: '+$BottomStatus.Text)}
 if(-not $script:globalSaveButton.IsEnabled -or $script:globalSaveButton.Effect){throw ('Successful save should stay clickable and clear its glow: '+$script:globalSaveButton.ToolTip)}
+if($script:globalSaveFeedback.Text -ne 'Saved'){throw 'Successful save did not report success'}
 $before=[IO.File]::ReadAllText($configPath)
 $MaxQueueSettingBox.Text='0';$ElevenLabsEnabledCheck.IsChecked=-not [bool]$ElevenLabsEnabledCheck.IsChecked
 Update-GlobalSaveGroup 'Settings';Update-GlobalSaveGroup 'ElevenLabs'
 Save-AllPendingChanges
 if([IO.File]::ReadAllText($configPath) -ne $before){throw 'Validation failure partially wrote settings'}
 if($BottomStatus.Text -notlike 'Not saved - Settings:*' -or -not $script:globalSaveButton.IsEnabled){throw 'Failed section did not stay visibly pending'}
+if($script:globalSaveFeedback.Text -notlike 'Not saved - Settings:*' -or $script:globalSaveFeedback.Visibility -ne 'Visible'){throw 'Failed Save did not show its reason by the button'}
 $MaxQueueSettingBox.Text='44';$ElevenLabsEnabledCheck.IsChecked=[bool]$saved.elevenlabs_enabled
 Update-GlobalSaveGroup 'Settings';Update-GlobalSaveGroup 'ElevenLabs'
 if(-not $script:globalSaveButton.IsEnabled -or $script:globalSaveButton.Effect){throw 'Reverting pending changes should clear the glow and stay clickable'}
@@ -62,4 +66,9 @@ $before=[IO.File]::ReadAllText($configPath)
 $script:automationRules[0].name='';$MaxQueueSettingBox.Text='45'
 Update-GlobalSaveGroup 'Actions';Update-GlobalSaveGroup 'Settings';Save-AllPendingChanges
 if([IO.File]::ReadAllText($configPath) -ne $before -or $BottomStatus.Text -notlike 'Not saved - Actions:*'){throw 'Action validation failure partially committed other settings'}
+$script:globalSaveFeedbackTimer.Interval=[TimeSpan]::FromMilliseconds(20)
+Show-SaveFeedback 'Feedback timeout test'
+$deadline=[DateTime]::UtcNow.AddSeconds(3)
+while($script:globalSaveFeedback.Visibility -eq 'Visible' -and [DateTime]::UtcNow -lt $deadline){$window.Dispatcher.Invoke([Action]{},[Windows.Threading.DispatcherPriority]::Background);Start-Sleep -Milliseconds 10}
+if($script:globalSaveFeedback.Visibility -ne 'Collapsed'){throw 'Save feedback did not disappear'}
 'Global Save passed: title position, cross-page edits, validation atomicity, revert and clean state.'

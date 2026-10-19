@@ -4500,7 +4500,6 @@ $script:progressTimer.Add_Tick({
 })
 $script:stateTimer.Start()
 $script:progressTimer.Start()
-Install-MainWindowCloseGuard $window
 $window.Add_Closed({
     foreach($timer in @($script:liveSettingsDebounce,$script:liveSettingsPump)){if($timer){$timer.Stop()}}
     if($script:liveSettingsClient){$script:liveSettingsClient.CancelAsync();$script:liveSettingsClient.Dispose()}
@@ -4534,6 +4533,7 @@ Install-NumericEditors
 Install-ProfanityEditor
 . (Join-Path $resourceRoot 'assets\YapLoqShell.ps1')
 Install-YapLoqShell
+Install-MainWindowCloseGuard $window
 try { Refresh-Grid } catch { $BottomStatus.Text = 'Could not load settings: ' + $_.Exception.Message }
 foreach($group in $script:globalSaveGroups.Values){Reset-GlobalSaveGroup $group.Key}
 Install-LiveSettings

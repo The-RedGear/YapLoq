@@ -118,6 +118,36 @@ $window.Dispatcher.BeginInvoke([action]{
 })|Out-Null
 $typed=Show-AutomationStep $null
 if($typed.action -ne 'avatar-id'){throw 'Typed loaded action name did not resolve to its ID'}
+$cachePath=Join-Path $configDir 'streamerbot-actions-cache.json'
+[IO.File]::WriteAllText($cachePath,'[{"id":"cache-one","name":"First cached action"},{"id":"cache-two","name":"Second cached action"}]')
+$script:automationRemoteActions=@()
+$window.Dispatcher.BeginInvoke([action]{
+    $d=$script:automationStepDialog;$picker=$d.FindName('StepActionPicker')
+    if($picker.Items.Count -ne 2 -or @($script:automationRemoteActions|Where-Object{$_.name -isnot [string]}).Count){throw 'Cold cache loaded multiple actions as one item'}
+    if($picker.Text){throw 'Cached names leaked into editable text'}
+    $picker.SelectedIndex=1;$d.FindName('StepSave').RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
+})|Out-Null
+$cachedStep=Show-AutomationStep $null
+if($cachedStep.action -ne 'cache-two'){throw 'Cold cache selection did not preserve action ID'}
+$script:automationRemoteActions=@([pscustomobject]@{id='stable-id';name='Old action name'})
+$window.Dispatcher.BeginInvoke([action]{
+    $d=$script:automationStepDialog
+    Set-AutomationActionCatalogue $d @([pscustomobject]@{id='stable-id';name='Renamed action'})
+    if($d.FindName('StepActionPicker').Text -ne 'Renamed action'){throw 'Remote rename did not update the selected label'}
+    $d.FindName('StepSave').RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
+})|Out-Null
+$renamed=Show-AutomationStep ([pscustomobject]@{type='action';action='stable-id';label='Old action name';args=[pscustomobject]@{}})
+if($renamed.action -ne 'stable-id' -or $renamed.label -ne 'Renamed action'){throw 'Remote rename changed the saved ID'}
+$window.Dispatcher.BeginInvoke([action]{
+    $d=$script:automationStepDialog
+    Set-AutomationActionCatalogue $d @([pscustomobject]@{id='replacement-id';name='Replacement action'})
+    $d.FindName('StepSave').RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
+    if(-not $d.Resources['ActionMissing'] -or $d.FindName('StepStatus').Text -notlike '*removed*'){throw 'Deleted target was silently saved'}
+    $picker=$d.FindName('StepActionPicker');$picker.Text='Replacement action';Update-AutomationActionSearch $d;$picker.SelectedIndex=0
+    $d.FindName('StepSave').RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
+})|Out-Null
+$replacement=Show-AutomationStep $renamed
+if($replacement.action -ne 'replacement-id'){throw 'Deleted target could not be replaced'}
 $script:automationRemoteActions=@(1..5000|ForEach-Object{[pscustomobject]@{id=('id-'+$_);name=('Action '+$_.ToString('00000'))}})
 $window.Dispatcher.BeginInvoke([action]{
     $d=$script:automationStepDialog;$picker=$d.FindName('StepActionPicker')

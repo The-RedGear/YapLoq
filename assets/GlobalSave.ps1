@@ -379,18 +379,27 @@ function script:Add-GlobalSaveGroup([string]$key,$inputs,[scriptblock]$save){
     Reset-GlobalSaveGroup $key
 }
 
+function script:Show-SaveFeedback([string]$message,[bool]$failed=$false){
+    if(-not $script:globalSaveFeedback){return}
+    $script:globalSaveFeedbackTimer.Stop()
+    $script:globalSaveFeedback.Text=$message;$script:globalSaveFeedback.ToolTip=$message
+    $script:globalSaveFeedback.Foreground=[Windows.Media.BrushConverter]::new().ConvertFromString($(if($failed){'#E5B96F'}else{'#86C5AE'}))
+    $script:globalSaveFeedback.Visibility='Visible'
+    $script:globalSaveFeedbackTimer.Start()
+}
+
 function script:Save-AllPendingChanges {
-    if($script:globalSaving){return}
+    if($script:globalSaving){Show-SaveFeedback 'Save is in progress…';return}
     foreach($group in $script:globalSaveGroups.Values){
         foreach($grid in @($group.Inputs|Where-Object{$_ -is [Windows.Controls.DataGrid]})){
             try{
-                if(-not $grid.CommitEdit([Windows.Controls.DataGridEditingUnit]::Cell,$true) -or -not $grid.CommitEdit([Windows.Controls.DataGridEditingUnit]::Row,$true)){$BottomStatus.Text='Not saved - finish the highlighted table edit first.';return}
-            }catch{$BottomStatus.Text='Not saved - finish the table edit first.';return}
+                if(-not $grid.CommitEdit([Windows.Controls.DataGridEditingUnit]::Cell,$true) -or -not $grid.CommitEdit([Windows.Controls.DataGridEditingUnit]::Row,$true)){$BottomStatus.Text='Not saved - finish the highlighted table edit first.';Show-SaveFeedback $BottomStatus.Text $true;return}
+            }catch{$BottomStatus.Text='Not saved - finish the table edit first.';Show-SaveFeedback $BottomStatus.Text $true;return}
         }
         Update-GlobalSaveGroup $group.Key
     }
     $pending=@($script:globalSaveGroups.Values|Where-Object{$_.Dirty})
-    if(-not $pending.Count){$BottomStatus.Text='All changes saved.';Update-GlobalSaveButton;return}
+    if(-not $pending.Count){$BottomStatus.Text='All changes saved.';Show-SaveFeedback 'All changes saved';Update-GlobalSaveButton;return}
     # Save routines may clear a password field; preserve its draft until commit succeeds.
     $secrets=@(foreach($entry in $script:credentialFields.Values){[pscustomobject]@{Entry=$entry;Mask=$entry.Mask.Password;Plain=$entry.Plain.Text}})
     $script:globalSaving=$true
@@ -416,9 +425,11 @@ function script:Save-AllPendingChanges {
         foreach($group in $script:globalSaveGroups.Values){Reset-GlobalSaveGroup $group.Key}
         if(@($pending|Where-Object Key -eq 'Actions').Count){Update-AutomationLegacyUi $true}
         $BottomStatus.Text='All pending changes saved. Restart after changing connection ports.'
+        Show-SaveFeedback 'Saved'
     }catch{
         foreach($saved in $secrets){$saved.Entry.Syncing=$true;$saved.Entry.Mask.Password=$saved.Mask;$saved.Entry.Plain.Text=$saved.Plain;$saved.Entry.Syncing=$false}
         $BottomStatus.Text='Not saved - '+$section+': '+$_.Exception.Message
+        Show-SaveFeedback $BottomStatus.Text $true
     }finally{
         foreach($saved in $secrets){$saved.Entry.Syncing=$false}
         $script:globalSaveStaging=$false;$script:globalSaveDraft=$null;$script:globalSaving=$false
@@ -478,6 +489,13 @@ function script:Install-GlobalSave {
     $script:globalSaveLabel=[Windows.Controls.TextBlock]::new();$script:globalSaveLabel.Text='Save';[void]$content.Children.Add($script:globalSaveLabel);$button.Content=$content
     [Windows.Automation.AutomationProperties]::SetName($button,'Save all pending changes')
     $parent=$BridgeStatusButton.Parent;$parent.Children.Insert($parent.Children.IndexOf($BridgeStatusButton),$button)
+    $script:globalSaveFeedback=[Windows.Controls.TextBlock]::new();$notice=$script:globalSaveFeedback
+    $notice.VerticalAlignment='Center';$notice.MaxWidth=260;$notice.Margin='0,0,10,0';$notice.TextTrimming='CharacterEllipsis';$notice.Visibility='Collapsed'
+    [Windows.Automation.AutomationProperties]::SetName($notice,'Save result')
+    $parent.Children.Insert($parent.Children.IndexOf($button),$notice)
+    $script:globalSaveFeedbackTimer=[Windows.Threading.DispatcherTimer]::new();$script:globalSaveFeedbackTimer.Interval=[TimeSpan]::FromSeconds(6)
+    $script:globalSaveFeedbackTimer.Add_Tick({param($sender,$e)$sender.Stop();$script:globalSaveFeedback.Visibility='Collapsed'})
+    $window.Add_Closed({if($script:globalSaveFeedbackTimer){$script:globalSaveFeedbackTimer.Stop()}})
     $button.Add_Click({Save-AllPendingChanges})
     $window.Add_PreviewKeyDown({param($sender,$e)if($e.Key -eq 'S' -and [Windows.Input.Keyboard]::Modifiers -eq [Windows.Input.ModifierKeys]::Control){Save-AllPendingChanges;$e.Handled=$true}})
     $window.AddHandler([Windows.Controls.Button]::ClickEvent,[Windows.RoutedEventHandler]{param($sender,$e)

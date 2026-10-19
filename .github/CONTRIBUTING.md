@@ -43,3 +43,9 @@ py -m venv .venv
 
 The portable app is created in `dist/YapLoq`. Build metadata and packaging
 helpers live in `tools/`; application UI resources live in `assets/`.
+
+## Release naming
+
+Use `YapLoq X.Y.Z` for release titles and `vX.Y.Z` for tags. Do not append
+labels such as "Hotfix" or a reason to the title. Put the changes in the notes.
+Publish only after the GitHub test and Windows build jobs pass.

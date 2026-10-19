@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.2
+
+- Streamer.Bot action pickers load cached lists correctly, follow renamed actions by ID and flag deleted targets.
+- Save results appear beside the Save button briefly, including validation failures.
+- The main-window exit guard is registered after its functions are loaded.
+
 ## 0.6.1 — Hotfix
 
 - Saving during exit closes the app after success; failures remain visible in the prompt without discarding drafts.

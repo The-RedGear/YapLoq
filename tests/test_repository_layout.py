@@ -5,6 +5,11 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_exit_guard_is_installed_after_shell_loads_its_functions():
+    source = (ROOT / 'YapLoq.ps1').read_text(encoding='utf-8-sig')
+    assert source.rindex('Install-MainWindowCloseGuard $window') > source.rindex('Install-YapLoqShell')
+
+
 def test_readme_and_moved_notices_have_valid_local_links():
     for relative in ('README.md', '.github/CONTRIBUTING.md', 'docs/LEGAL.md',
                      'docs/PROVIDERS.md', 'docs/THIRD_PARTY_NOTICES.md'):
