@@ -11,7 +11,7 @@ def test_exit_guard_is_installed_after_shell_loads_its_functions():
 
 
 def test_readme_and_moved_notices_have_valid_local_links():
-    for relative in ('README.md', '.github/CONTRIBUTING.md', 'docs/LEGAL.md',
+    for relative in ('README.md', 'docs/USER_GUIDE.md', '.github/CONTRIBUTING.md', 'docs/LEGAL.md',
                      'docs/PROVIDERS.md', 'docs/THIRD_PARTY_NOTICES.md'):
         path = ROOT / relative
         for target in re.findall(r'\]\(([^)]+)\)', path.read_text(encoding='utf-8')):

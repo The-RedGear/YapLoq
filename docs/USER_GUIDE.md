@@ -1,137 +1,266 @@
-# YapLoq 0.5.0 user guide
+# YapLoq user guide
 
-Run `YapLoq.exe` from the extracted Windows download; keep the `_internal` folder beside the executable.
-YapLoq uses the `data` folder beside the EXE. A second launch restores the
-existing window rather than starting another playback service.
+For YapLoq 0.6.3 on Windows 10/11, 64-bit.
 
-## First voice
+## Get started
 
-Dashboard opens on launch. Choose **Windows voices** in Services for speech without an
-account, or configure a provider under **Services**. Select your stream output, use
-its test button, then add an alias in **Voices** and test it.
+1. Download **YapLoq-Windows-x64-update.zip** from the
+   [latest release](https://github.com/The-RedGear/YapLoq/releases/latest).
+2. Extract the entire folder and run **YapLoq.exe**. Keep `_internal` beside it.
+   You do not need to install Python.
+3. Open **Services** and enable a speech service. Windows voices work without an
+   account; other services may need credentials or a local server.
+4. Fill in the required fields and use **Test connection and load voices**.
+5. Open **Voices**, add an alias, choose its service and voice, then test it.
+6. On **Dashboard**, choose your alias, enter a message and click **Speak message**.
 
-| Service | Notes |
+If speech is silent, check the selected audio output in **Settings** and use the
+output test. Cloud services may charge for generated speech.
+
+## Find your way around
+
+| Page | What it's for |
 | --- | --- |
-| VoiceStudio | Local HTTP server (often `http://127.0.0.1:3900`) |
-| Windows voices | No account; enable on the Settings setup card |
-| Amazon Polly | Access key + secret (optional session token or AWS profile) |
-| ElevenLabs, Azure, Google, Watson, UberDuck, TTS.Monster, Acapela, CereProc | Each has its own Services page |
+| Dashboard | Speak a message and replay recent speech. |
+| Voices | Manage aliases, assignments, playlists, pronunciation and censorship. |
+| Queue | View waiting speech and history together; manage messages and filters. |
+| Services | Connect speech providers and load their voices. |
+| Streamer.Bot | Set up actions, copy the import pack and configure connections. |
+| Settings | Choose audio devices, speech-input options, profiles, backups and diagnostics. |
 
-On the **Voices** tab, the **ON** checkbox includes an alias in Streamer.bot
-**Random** Speak selection. Uncheck voices you do not want in that global pool.
-Explicit alias names still speak when requested (Playground / Test), even if OFF.
+Right-click lists and queue entries for the actions available there.
 
-For smaller custom pools (Wallace + Master Chief + Sgt Johnson only), open
-**Voices → Playlists**, create a named playlist, check those voices, then use
-`playlist:YourName` in Streamer.bot (or pick **Playlist: YourName** when exporting).
+## Services and connection status
 
-Saved keys are encrypted for the current Windows account (DPAPI). Moving `data` to
-another PC or account requires entering keys again. Cloud providers bill usage on
-their own accounts — YapLoq does not sell minutes.
+Enable the service you want to use, then enter its connection details. The test
+button stays disabled until the required fields are filled.
 
-## Streamer.bot identities
+- **Disconnected:** the service is enabled but has not connected successfully.
+- **Connecting:** a connection test is running; shown in yellow.
+- **Connected:** the connection succeeded; shown in green.
 
-When sending speak requests over UDP, prefer:
+Enabled services stay in the status dropdown even when a connection fails.
+If a test reports a partial result, read its message before assuming that voices
+are ready to use.
+
+Credentials are masked by default. Use the show/hide control to check them;
+changing visibility does not change the credential or require a save.
+
+For Amazon Polly, provide an AWS access key and secret, or an AWS profile.
+Temporary credentials may also need a session token. Choose the correct region.
+VoiceStudio needs the address of your running local server.
+
+## Saving changes
+
+Use **Save** beside the connection-status dropdown, or press **Ctrl+S**.
+
+The button turns purple and glows when there are unsaved changes. Valid settings
+usually take effect as you edit, but Save keeps them for the next launch.
+Connection ports and queue-recovery changes require Save and a restart.
+
+After a save attempt, a short message appears to the left of Save:
+
+- **Saved** or **All changes saved:** nothing remains pending.
+- **Not saved — click for details:** open it to read the full reason and use
+  **Copy details**.
+
+The message flashes briefly, then fades. Right-click Save and choose
+**Last save details** to reopen the result later. A failed save keeps your edits
+and the button's glow; correct the reported issue and save again.
+
+Right-click Save for **Discard unsaved changes**. Closing the app with pending
+edits offers **Save**, **Discard** or **Cancel**. A successful exit save closes
+the app; a failure keeps the prompt open with its reason.
+
+Voice and assignment editors may also have an **Apply** or **Save** confirmation
+for the record you're editing.
+
+## Voices, assignments and multiple voices
+
+An alias gives a provider voice a friendly name, icon and color. You can adjust
+its supported voice settings and organize voices into groups or playlists.
+The **ON** checkbox includes a voice in the enabled/random pool. Chat voice tags
+use enabled voices by default.
+
+For a smaller random selection, create a named playlist under **Voices → Playlists**.
+Use its exported Streamer.Bot action, or the `playlist:Name` selector in a custom
+integration.
+
+Under **Voices → Assignments**, enter a username and choose a special voice.
+Names match without regard to capitalization and work across platforms.
+Only special assignments appear here; ordinary viewers using the default voice
+are not added automatically.
+
+Use **Roles & rules** for broadcaster, moderator, VIP, subscriber and custom-group
+defaults. The fallback voice is on the Assignments page. Role/group matching
+depends on the information Streamer.Bot sends with the event.
+
+Edit, reset or delete an assignment from its controls or right-click menu.
+Deleting it does not delete the viewer's speech history.
+[More about assignments](ASSIGNMENTS.md).
+
+To switch voices within one input, use alias names in brackets:
 
 ```text
-VSPEAK
-YourAlias
-%message%
-%displayName%
-%userName%
+[Plankton] Hello! [Spongebob] Hi, Plankton!
 ```
 
-Use **display** (`%displayName%` or a plain `%user%` name) and **login**
-(`%userName%`) on separate lines. Do not put Streamer.bot’s `%user%` object JSON on
-those lines — current builds often expand it to `{"badges":...,"login":...}`, which
-breaks automatic voice rules. Full recipes: [STREAMERBOT.md](STREAMERBOT.md).
+Each part gets its own clip and plays in message order. Use full alias names
+when a shortened name is ambiguous. An explicit voice selection overrides the
+normal assignment for that part.
 
-## Queue
+Under **Settings → Speech input**, you can also enable sentence splitting.
+It is off by default and can add pauses and provider requests. Splitting keeps
+the voices and playback order, with at most 50 resulting clips per input.
+SSML is kept intact.
 
-- Pause audio keeps the current playback position. Resume continues it.
-- Pause after current finishes the current item before pausing.
-- Clear waiting removes pending items and lets the current item finish.
-- Stop & clear also cancels the current item, including generation or a delay.
-- Drag an item onto another pending item to move it before that item.
-- Priorities apply to pending messages; active speech is not interrupted.
-- Queue time is approximate, based on known audio duration or text length.
+## Queue, history and playback
 
-Set per-user limits, duplicate windows and message expiry in Settings. Zero turns
-off these optional limits. Queue restoration is opt-in and always starts paused.
-An interrupted message may restart from the beginning after restoration.
+Queue and history share one page. New inputs appear at the top, with older entries
+below. Status changes and replaying a recording do not move an existing row.
+Pending speech still follows its scheduled playback order.
 
-## Rules and profiles
+Statuses identify generating, queued, playing and failed speech. On Dashboard,
+completed entries remain in recent speech without a repeated “Finished” label.
+A larger window reveals more recent entries.
 
-Routing rules are checked top to bottom. The first exact match for user, role,
-source or event chooses the alias and priority. They take precedence over legacy
-viewer and role mappings. Higher priorities play first.
+Use a row's right-click menu to inspect the message, replay or save available
+audio, change an ungenerated voice, remove a pending item, or move it up/down.
+Replays use the existing recording rather than generating the text again.
 
-Save rules before switching pages. Save settings before saving a profile.
-Profiles contain voices, routing, dictionaries, filters and audio preferences.
-They keep your current provider credentials and network ports. New incoming
-messages use the loaded profile; queued messages retain their selected alias.
+Playback controls have different purposes:
 
-## Audio
+- **Pause audio:** pause immediately and resume from the same position.
+- **Pause after current:** let the current sound finish, then pause. The small
+  square beside the player's transport controls is this stop-after-current
+  control, not an immediate stop.
+- **Clear waiting:** remove pending speech without stopping the current sound.
+- **Stop and clear:** stop the current sound and clear pending speech.
 
-An alias can override the stream output. Explicit preview sources use the preview
-device. Settings provides separate stream and preview volumes, peak normalization
-and short fades. Samples are clipped safely when amplified.
+Save recordings you want to keep. History and cached audio follow the retention
+setting; audio that has expired cannot be replayed.
 
-OBS ducking is optional. Enable OBS's WebSocket server, enter its address and
-password, load inputs, choose the music/desktop input, and set its speech volume.
-YapLoq remembers the original volume and restores it when the queue finishes.
-Do not select the TTS input itself. A forced process termination or power loss
-cannot guarantee an OBS volume restoration.
+## Filters and speech options
 
-## Advanced speech
+Open **Queue → Rules → Filters → Chat prefixes** for:
 
-Playground's Advanced SSML option is available for Polly and Windows voices.
-Use a complete `speak` document. SSML controls rate, pitch and emphasis according
-to the selected engine's supported tags. Unsupported tags and malformed XML are
-rejected. Normal text mode never interprets chat messages as SSML.
+- **Remove !command**
+- **Remove @mention**
 
-Windows example:
+These remove matching tokens, not the rest of the message. For example,
+`!say Hello @viewer welcome back` becomes `Hello welcome back`.
+An input with nothing left after filtering produces no speech.
 
-```xml
-<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US">
-  Hello <break time="300ms"/> there.
-</speak>
+Other filters handle links, excessive capitals, repeated characters, symbols and
+emoji. Pronunciation and censorship controls are under **Voices**.
+
+Queue controls also include limits, cooldowns, duplicate protection and message
+expiry. Zero disables the optional limits that support it.
+Queue recovery is opt-in and restarts paused; interrupted audio may restart from
+the beginning.
+
+## Streamer.Bot setup
+
+1. In **Streamer.Bot → Connection**, enable the UDP listener and check its port.
+   Save and restart after changing listener settings.
+2. Open **Import pack** and click **Copy import code**.
+3. In Streamer.Bot, choose **Import → Import String** and paste.
+
+One import supports Twitch, YouTube and Kick. Choose the speech action that
+matches your trigger:
+
+| Action | Use it for |
+| --- | --- |
+| Speak - Chat command | A speech command such as `!ylsay`. |
+| Speak - Channel point reward | A redemption with viewer-entered text. |
+| Speak - Chat message | Ordinary chat messages. |
+
+Use only one speech handler per input to avoid duplicate audio. The first two
+actions use `%rawInput%`; the chat-message action uses `%message%`. The supplied
+actions already handle this—do not append both fields to one payload.
+
+The pack includes `!voice Voice name` and `!voice reset` for VIPs and moderators,
+with broadcaster access. Moderator speech and playback commands include
+`!ylsay`, `!ylplay`, `!ylpause`, `!ylskip`, `!ylpauseafter`, `!ylclear`
+and `!ylstop`. For example:
+
+```text
+!ylsay [Plankton] Hello! [Spongebob] Hi!
 ```
 
-Polly example:
+To export additional voice actions later, select voices and choose
+**Export voices**. You do not need a chat command for every voice.
 
-```xml
-<speak>Hello <break time="300ms"/> there.</speak>
-```
+### Run actions from YapLoq events
 
-The message limit also counts SSML markup. Some Polly engines support fewer tags
-than others. VoiceStudio style instructions are separate from SSML.
+Under **Streamer.Bot → Actions**, add an action, name it, choose its triggers
+and add sub-actions or delays. Type in the action picker to filter Streamer.Bot
+actions, or open its dropdown. Renames follow the saved action ID; a deleted
+target needs a replacement.
 
-## History and data
+Steps dispatch in saved order. If you need to wait for an action to finish
+inside Streamer.Bot, configure its queue accordingly.
 
-Replay selected plays the cached recording, including the original random
-pronunciation. Save audio exports it to the folder selected in Settings. Only
-the latest 30 generated recordings remain in the cache; older history rows can
-remain after their recordings expire.
+The **Queue** trigger category includes:
 
-Settings provides backups, restore, reset and preset import/export. Restores and
-imports create a backup first. Presets omit engine credentials. Backups retain
-encrypted credentials, so keep them private.
+| Trigger | When it runs |
+| --- | --- |
+| Queue started (first audio ready) | Once when the first audio in a new queue is ready. |
+| Message added to queue | Once for every accepted input, including the first. |
+| Message added to active queue | Once when an input joins an existing queue; never for the first input of a new queue. |
 
-Speaker.bot migration reads only the selected `voicealiases.dat`, previews
-supported Polly aliases and lists skipped engines. Review devices and rate/pitch
-after import. Multi-voice aliases import the first voice; unsupported engines are
-skipped. Configure credentials separately.
+An existing queue can be playing, generating or waiting. Splitting one input into
+voices or sentences does not repeat the message-added events.
 
-Activity shows the latest speech events and application log. Export diagnostics
-creates a ZIP without messages, keys, usernames or local paths. It does not include
-raw logs. Update checks use GitHub Releases; private or unpublished releases may
-be unavailable to unauthenticated checks.
+[Full Streamer.Bot setup](STREAMERBOT.md).
 
-## Compatibility
+## Audio and advanced speech
 
-YapLoq supplies Speaker.bot-compatible commands and event subscriptions over
-WebSocket, plus local HTTP and UDP commands. It has its own identity and does not
-reproduce every Speaker.bot provider or feature.
+Settings provides separate stream and preview devices and volumes, plus optional
+normalization and fades. A voice can override its stream output.
 
-See also [RELEASE_NOTES.md](RELEASE_NOTES.md), [LEGAL.md](LEGAL.md), and [ROADMAP.md](ROADMAP.md).
+Optional OBS ducking lowers a selected OBS input during speech and restores its
+volume afterward. Choose the music or desktop-audio input, not the TTS input.
+A forced shutdown or power loss can prevent volume restoration.
+
+Use **Advanced SSML** only with a supported voice/provider and a complete
+`<speak>…</speak>` document. Supported tags vary by engine; malformed XML or
+unsupported options are rejected. VoiceStudio style instructions are separate
+from SSML.
+
+## Profiles, backups and updates
+
+Profiles let you switch voices, rules, dictionaries, filters and audio preferences
+without replacing provider credentials or network ports. Save pending settings
+before creating a profile. Already queued speech keeps its chosen voice.
+
+Settings also provides backups, restore and preset import/export. Backups include
+settings, actions and viewer assignments. Keep backups private: they may contain
+encrypted credentials.
+
+For a Speaker.bot alias import, select `voicealiases.dat` and review the preview.
+Only supported aliases are imported; configure service credentials separately.
+
+The `data` folder beside the app contains settings, history and runtime files.
+Windows-encrypted credentials are tied to your Windows account and computer.
+If you move to another computer, expect to enter service credentials again.
+Do not replace or delete `data` when manually updating the app.
+
+Use the download icon beside the version number to check for updates and read
+release notes. It turns green when an update is available. You can check manually
+again without a cooldown. Follow the update window's download and restart steps.
+Development previews use their own update channel and data folder.
+
+## If something isn't working
+
+- **No sound:** check the service, selected voice, audio output, volume and queue status.
+- **A voice is missing:** enable its service, complete the required fields and test/load voices.
+- **Speech plays twice:** check for duplicate Streamer.Bot triggers or multiple speech handlers.
+- **An assignment is ignored:** check the username, role information and any explicit voice/tag.
+- **Save stays glowing:** click the save result or open **Last save details** for the reason.
+- **An action target was removed:** choose its replacement in the sub-action editor.
+
+Open **Settings → Diagnostics** for events, logs and diagnostic export.
+Keep credentials and private chat data out of public bug reports.
+
+[Release notes](RELEASE_NOTES.md) · [Roadmap](ROADMAP.md) · [Legal notes](LEGAL.md)

@@ -1,11 +1,11 @@
 # YapLoq
 
-<img src="assets/YapLoq-icon.png" width="96" alt="YapLoq logo">
+<img src="assets/YapLoq-icon.png" width="96" alt="YapLoq — text-to-speech for streamers">
 
 Give your stream a voice.
 
-YapLoq brings text-to-speech, custom voices and Streamer.bot controls together
-in a Windows app. Let viewers speak with their own voices, turn a message into
+YapLoq is a Windows text-to-speech (TTS) app for Twitch, YouTube and Kick streams,
+with Streamer.bot integration. Give viewers their own voices, turn a message into
 a conversation between characters, or keep things simple with one voice for chat.
 
 **[Download for Windows](https://github.com/The-RedGear/YapLoq/releases/latest)** ·
