@@ -54,3 +54,12 @@ jobs:
       - name: Verify real Save-and-exit flow
         shell: powershell
         run: powershell.exe -STA -NoProfile -ExecutionPolicy Bypass -File tests/test_main_exit_ui.ps1
+      - name: Verify stable and preview custom icon loading
+        shell: powershell
+        run: powershell.exe -STA -NoProfile -ExecutionPolicy Bypass -File tests/test_voice_icon_runner.ps1
+      - name: Verify playlist picker contrast and themed checkboxes
+        shell: powershell
+        run: powershell.exe -STA -NoProfile -ExecutionPolicy Bypass -File tests/test_playlist_picker_ui.ps1
+      - name: Verify Audio Stims libraries and saves
+        shell: powershell
+        run: powershell.exe -STA -NoProfile -ExecutionPolicy Bypass -File tests/test_audio_stims_ui.ps1

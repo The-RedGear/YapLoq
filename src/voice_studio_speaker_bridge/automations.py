@@ -32,6 +32,8 @@ CATALOG += [dict(source='viewer', event=event, label=label) for event, label in 
     ('voicereset', 'Viewer voice reset successfully'), ('voiceslisted', 'Viewer requested available voices'),
     ('commandfailed', 'Viewer voice command failed'))]
 CATALOG += [dict(source='legacy', event=value[1], label=value[0]) for value in LEGACY.values()]
+CATALOG += [dict(source='audiostim', event=event, label='Audio Stim ' + label) for event, label in
+            [('playing', 'started'), ('finished', 'finished'), ('error', 'failed'), ('cancelled', 'cancelled')]]
 FIELDS = ('alias', 'source', 'user', 'voiceName', 'engineName', 'id', 'text', 'integration', 'platform', 'userId', 'reason', 'publicVoice')
 
 

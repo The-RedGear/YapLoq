@@ -65,6 +65,7 @@ class SpeakerBotProtocol:
         "texttospeech": ["received", "generating", "textqueued", "queueadded", "queueextended", "engineprocessed", "playing", "finished", "cancelled", "deleted", "error", "voicechanged"],
         "voicegate": ["profileactivated"],
         "viewer": ["commandreceived", "voiceassigned", "voicereset", "voiceslisted", "commandfailed"],
+        "audiostim": ['playing', 'finished', 'error', 'cancelled'],
     }
 
     def __init__(self, settings: Settings, engine: "SpeechEngine"):
@@ -424,11 +425,17 @@ class SpeakerBotProtocol:
             if overrides:
                 alias = replace(alias, **overrides)
             metadata = dict(platform=viewer_key[0], user_id=viewer_key[1], display_name=user) if viewer_key else {}
+            metadata.update(message_id=str(data.get('messageId') or uuid.uuid4())[:128],
+                            avatar_url=str(data.get('userProfileImageUrl') or data.get('profileImageUrl') or '')[:2048])
             if priority:
                 metadata['priority'] = priority
             if viewer_key and saved_viewer and saved_viewer.get('voice') and saved_viewer.get('platform') != 'username':
                 self.viewers.update(dict(platform=viewer_key[0], userId=viewer_key[1], displayName=user_display, login=user_login))
             def tagged_alias(name):
+                from .audio_stims import resolve_stim
+                stim = resolve_stim(self.settings, name, dict(user=moderation_user, displayName=user, userId=metadata.get('user_id', '')))
+                if stim is not None:
+                    return stim
                 all_enabled = bool(viewer_key and self.settings.chat_voice_tags_all_enabled)
                 restricted = bool(viewer_key and not all_enabled)
                 candidates = list(eligible_voices(self.settings, data)) if restricted else [voice for voice in self.settings.aliases.values() if not viewer_key or voice.enabled]
@@ -456,14 +463,25 @@ class SpeakerBotProtocol:
                     if len(matches) == 1:
                         selected = matches[0]
                 if selected is None:
-                    if not viewer_key:
-                        raise ValueError(f'Voice tag [{name}] was not found. Use the full alias name from Voices.')
+                    # Unknown/ambiguous brackets are ordinary speech, not an
+                    # invalid request. Known but inaccessible voices still obey
+                    # their enabled state and viewer permissions.
+                    normalized_name = normalized_voice_name(name)
+                    known = [voice for voice in self.settings.aliases.values()
+                             if any(normalized_voice_name(value) == normalized_name or
+                                    (len(normalized_name) >= 2 and
+                                     normalized_voice_name(value).startswith(normalized_name + ' '))
+                                    for value in (voice.name, public_label(voice)))]
+                    if not known or len(known) > 1:
+                        return None
                     raise ValueError('A voice tag is unavailable. Check its name, enabled state and chat voice-tag access setting.')
                 return replace(selected, **overrides) if overrides else selected
             # Strip prefixes before splitting: a command-only intro must not
             # become an empty segment that rejects otherwise valid speech.
             if not alias.ssml:
                 text = strip_chat_tokens(text, self.settings)
+                from .audio_stims import replace_censored_words
+                text = replace_censored_words(text, self.settings)
             segments = split_voices(text, alias, tagged_alias)
             if len(segments) > 1 and any(voice.ssml for _, voice in segments):
                 raise ValueError('Multi-voice input currently supports plain text, not SSML')

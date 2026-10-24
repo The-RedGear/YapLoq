@@ -14,6 +14,7 @@ function Set-AutomationButtonIcon([string]$name,[string]$icon,[string]$label,[bo
 function Set-AutomationMessage([string]$message){(Get-AutomationControl 'AutomationStatus').Text=$message}
 
 function Get-TriggerCategory($trigger){
+    if($trigger.source -eq 'audiostim'){return 'Audio Stims'}
     if($trigger.source -eq 'viewer'){return 'Viewers'}
     if($trigger.source -eq 'legacy'){return 'Queue'}
     if($trigger.source -eq 'integration'){return 'Integrations'}
@@ -30,7 +31,7 @@ function Add-AutomationTrigger($trigger){
 }
 
 function Add-TriggerMenuCategories($menu){
-    foreach($category in @('Speech','Queue','Playback','Viewers','Integrations')){
+    foreach($category in @('Speech','Queue','Playback','Audio Stims','Viewers','Integrations')){
         $entries=@($script:automationEventCatalog|Where-Object{(Get-TriggerCategory $_) -eq $category -and ($_.source -ne 'legacy' -or $_.event -in @('queued','playing','finished'))})
         if(-not $entries.Count){continue}
         $group=[Windows.Controls.MenuItem]::new();$group.Header=$category

@@ -70,7 +70,7 @@ class SpeechEngine:
                 values = [{"text": job.text, "alias": job.alias.to_dict(), "name": job.alias.name,
                            "source": job.source, "user": job.user, "priority": job.priority,
                            "platform": job.platform, "userId": job.user_id, "displayName": job.display_name,
-                           "timestamp": job.timestamp, "segmentIndex": job.segment_index, "replay_recording": job.replay_recording,
+                           "timestamp": job.timestamp, "segmentIndex": job.segment_index, "messageId": job.message_id, "avatarUrl": job.avatar_url, "replay_recording": job.replay_recording,
                            "audio_path": job.audio_path if job.replay_recording else ""}
                           for job in jobs if job and not job.cancelled and job.status not in {"Finished", "Error", "Cancelled", "Skipped", "Removed"}]
             temporary = self.queue_path.with_suffix(".tmp")
@@ -88,7 +88,7 @@ class SpeechEngine:
                 job = SpeechJob(value["text"], VoiceAlias.from_dict(value["name"], value["alias"]),
                     source=value.get("source", "Restored"), user=value.get("user", ""),
                     priority=int(value.get("priority", 0)), timestamp=value["timestamp"],
-                    platform=value.get('platform', ''), user_id=value.get('userId', ''), display_name=value.get('displayName', ''), segment_index=int(value.get('segmentIndex', 0)))
+                    platform=value.get('platform', ''), user_id=value.get('userId', ''), display_name=value.get('displayName', ''), segment_index=int(value.get('segmentIndex', 0)), message_id=value.get('messageId', ''), avatar_url=value.get('avatarUrl', ''))
                 age = max(0, (datetime.now().astimezone() - datetime.fromisoformat(job.timestamp.replace("Z", "+00:00"))).total_seconds())
                 job.enqueued_at = monotonic() - age
                 if value.get("replay_recording"):
@@ -185,18 +185,18 @@ class SpeechEngine:
             self.prepare_thread.join(timeout=5)
 
     def enqueue(self, text: str, alias: VoiceAlias, source: str = "Manual", user: str = "", priority: int = 0,
-                *, platform: str = "", user_id: str = "", display_name: str = "") -> SpeechJob:
+                *, platform: str = "", user_id: str = "", display_name: str = "", message_id='', avatar_url='') -> SpeechJob:
         # All transport threads share one admission boundary for limits/cooldowns.
         with self._admission_lock:
             return self._enqueue(text, alias, source, user, priority,
-                                 viewer=dict(platform=platform, user_id=user_id, display_name=display_name))
+                                 viewer=dict(platform=platform, user_id=user_id, display_name=display_name, message_id=message_id, avatar_url=avatar_url))
 
-    def enqueue_many(self, segments, source='Manual', user='', priority=0, *, platform='', user_id='', display_name=''):
+    def enqueue_many(self, segments, source='Manual', user='', priority=0, *, platform='', user_id='', display_name='', message_id='', avatar_url=''):
         """Validate one input completely before publishing any of its ordered segments."""
         with self._admission_lock:
             if not segments:
                 raise ValueError('Message is empty')
-            viewer = dict(platform=platform, user_id=user_id, display_name=display_name)
+            viewer = dict(platform=platform, user_id=user_id, display_name=display_name, message_id=message_id, avatar_url=avatar_url)
             jobs = [self._enqueue(text, alias, source, user, priority, viewer=viewer, dry_run=True)
                     for text, alias in segments]
             if sum(len(job.text) for job in jobs) > self.settings.max_characters:
@@ -219,7 +219,7 @@ class SpeechEngine:
                     self._recent_requests[(user.casefold(), job.alias.name, job.text.casefold())] = now
                     self._publish_job(job, queue_added=False)
                 event_data = dict(
-                    self._event_data(jobs[0]), speechIds=[job.speech_id for job in jobs],
+                    self._event_data(next((job for job in jobs if not job.alias.audio_stim), jobs[0])), speechIds=[job.speech_id for job in jobs],
                     segmentCount=len(jobs), text=' '.join(job.text for job in jobs))
                 self.events.emit('texttospeech', 'queueadded', event_data)
                 if queue_was_active:
@@ -232,7 +232,9 @@ class SpeechEngine:
         if not self._enabled:
             raise ValueError("TTS is disabled")
         self.settings.reload_if_changed()
-        if not recording:
+        if not recording and alias.provider == 'audio-stim':
+            self._prepare_text('Audio stim', user)  # Apply sender block/allow rules even for sound-only inputs.
+        elif not recording:
             text = self._prepare_ssml(text, user, alias) if alias.ssml else self._prepare_text(text, user)
         if not text:
             raise ValueError("Message is empty")
@@ -244,7 +246,7 @@ class SpeechEngine:
         self._recent_requests = {key: stamp for key, stamp in self._recent_requests.items()
                                  if now - stamp < self.settings.duplicate_window}
         duplicate_key = (user.casefold(), alias.name, text.casefold())
-        if not recording and self.settings.duplicate_window and duplicate_key in self._recent_requests:
+        if not recording and alias.provider != 'audio-stim' and self.settings.duplicate_window and duplicate_key in self._recent_requests:
             raise ValueError("This message is already in the recent speech queue")
         if user and self.settings.per_user_queue_limit:
             with self._lock, self.pending.mutex:
@@ -456,21 +458,31 @@ class SpeechEngine:
                 "user": job.user, "status": job.status, "duration": job.duration_ms,
                 "error": job.error, "audioPath": job.audio_path, "priority": job.priority,
                 "provider": job.alias.provider, "platform": job.platform,
-                "userId": job.user_id, "displayName": job.display_name, "segmentIndex": job.segment_index}
+                "userId": job.user_id, "displayName": job.display_name, "segmentIndex": job.segment_index,
+                "messageId": job.message_id, "userProfileImageUrl": job.avatar_url,
+                "audioStim": dict(job.alias.audio_stim), "volume": job.alias.volume}
 
     def replay_history(self, speech_id: str) -> SpeechJob:
+        self.settings.reload_if_changed()
         with self._history_lock:
             entry = next((item for item in self.history if item.get("id") == speech_id), None)
         if not entry:
             raise ValueError("History item was not found")
         alias = self.settings.get_alias(str(entry.get("alias", "")))
         if alias is None:
-            alias = VoiceAlias(str(entry.get("alias", "Voice")), provider=str(entry.get("provider", "voicestudio")))
+            alias = VoiceAlias(str(entry.get("alias", "Voice")), provider=str(entry.get("provider", "voicestudio")),
+                               volume=float(entry.get('volume', 1)), audio_stim=dict(entry.get('audioStim') or {}))
+        if alias.audio_stim:
+            library = self.settings.audio_stims.get(alias.audio_stim.get('name'), {})
+            device = library.get('output_device', '')
+            alias.output_device = (self.settings.output_device or '[Default]') if device == '[Same as TTS output]' else device
+            alias.audio_stim = dict(alias.audio_stim, action=library.get('action', ''), replay_actions=library.get('replay_actions', False), allow_without_user=library.get('allow_without_user', False))
         with self._admission_lock:
             path = self._history_audio_path(entry)
             if path is None:
                 raise ValueError("This recording has expired from the audio cache. Speak the message again in Playground.")
-            job = self._enqueue(str(entry.get("text", "")), alias, "History recording", "", 0, recording=str(path))
+            job = self._enqueue(str(entry.get("text", "")), alias, "History recording", str(entry.get('user', '')), 0, recording=str(path),
+                                viewer=dict(platform=entry.get('platform', ''), user_id=entry.get('userId', ''), display_name=entry.get('displayName', ''), message_id=entry.get('messageId', ''), avatar_url=entry.get('userProfileImageUrl', '')))
         return job
 
     def test_output(self, device: str, preview: bool = False) -> SpeechJob:
@@ -640,6 +652,10 @@ class SpeechEngine:
             "userId": job.user_id,
             "displayName": job.display_name,
             "segmentIndex": job.segment_index,
+            "messageId": job.message_id,
+            "userProfileImageUrl": job.avatar_url,
+            "stim": dict(job.alias.audio_stim),
+            "replay": job.replay_recording,
             "pitch": 0.0,
             "volume": job.alias.volume,
             "rate": job.alias.speed,
@@ -651,6 +667,8 @@ class SpeechEngine:
             job = next((item for item in self.pending.queue if item and item.speech_id == speech_id), None)
             if job is None or job.cancelled:
                 raise ValueError('This message is no longer waiting. Playing and completed speech cannot be changed.')
+            if job.alias.provider == 'audio-stim':
+                raise ValueError('An Audio Stim cannot be changed into a voice segment')
             if job.generation_started or job.replay_recording or job.status != 'Queued':
                 raise ValueError('This message has already started generating or has cached audio. Choose a message still marked Queued.')
             alias = self.settings.get_alias(alias_name)
@@ -772,6 +790,11 @@ class SpeechEngine:
         )
 
     def _synthesize(self, job: SpeechJob) -> bytes:
+        if job.alias.provider == 'audio-stim':
+            from .audio_stims import render_sound, render_pause
+            if job.alias.audio_stim.get('pause_seconds'):
+                return render_pause(job.alias.audio_stim['pause_seconds'])
+            return render_sound(job.alias.voice_id)
         return registry.client(job.alias.provider, self.settings).synthesize_wav(job.text, job.alias)
 
     def _generate(self, job: SpeechJob) -> bytes | None:
@@ -965,17 +988,26 @@ class SpeechEngine:
                 # Matching bare "test" incorrectly sent pronunciation / voice
                 # checks to headphones while stream speech used another device.
                 source_key = job.source.casefold()
-                if "preview" in source_key:
+                if job.alias.audio_stim:
+                    chosen = job.alias.output_device or self.settings.audio_stim_output_device or self.settings.output_device
+                    self.audio.output_device = "" if chosen == "[Default]" else chosen
+                elif "preview" in source_key:
                     preview_device = self.settings.preview_output_device
                     chosen = job.alias.output_device or preview_device or self.settings.output_device
                     self.audio.output_device = "" if chosen == "[Default]" else chosen
                 else:
                     chosen = job.alias.output_device or self.settings.output_device
                     self.audio.output_device = "" if chosen == "[Default]" else chosen
-                played = self.audio.play(job.pcm, cancel_event=job.cancel_event)
+                if job.alias.audio_stim:
+                    played = self.audio.play(job.pcm, cancel_event=job.cancel_event,
+                                             on_started=lambda: self.events.emit('audiostim', 'playing', self._event_data(job)))
+                else:
+                    played = self.audio.play(job.pcm, cancel_event=job.cancel_event)
                 if played and not job.cancelled:
                     job.status = "Finished"
                     self.events.emit("texttospeech", "finished", self._event_data(job))
+                    if job.alias.audio_stim:
+                        self.events.emit('audiostim', 'finished', self._event_data(job))
                 elif job.cancelled:
                     job.status = "Cancelled"
                 else:
@@ -987,10 +1019,14 @@ class SpeechEngine:
                 job.status = "Error"
                 job.error = str(exc)
                 self.events.emit("texttospeech", "error", data)
+                if job.alias.audio_stim:
+                    self.events.emit('audiostim', 'error', data)
             finally:
                 self.events.acknowledge_action(job.speech_id)
                 if job.status in {"Cancelled", "Skipped"}:
                     self.events.emit("texttospeech", "cancelled", self._event_data(job))
+                    if job.alias.audio_stim:
+                        self.events.emit('audiostim', 'cancelled', self._event_data(job))
                 # Replays already exist in history — don't flood Recent with duplicates.
                 if not job.replay_recording:
                     self._record_history(job)

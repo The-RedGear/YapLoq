@@ -7,7 +7,8 @@
     <TextBlock Text="Word or phrase" Margin="0,0,0,6"/><PasswordBox Name="WordHidden"/><TextBox Name="Word" Visibility="Collapsed"/>
     <TextBlock Text="Other forms (comma separated)" Margin="0,16,0,6"/><PasswordBox Name="VariantsHidden"/><TextBox Name="Variants" Visibility="Collapsed"/>
     <CheckBox Name="MatchVariants" Content="Include these other forms" IsChecked="True" Margin="0,12,0,16"/>
-    <TextBlock Text="Action" Margin="0,0,0,6"/><ComboBox Name="Action"><ComboBoxItem Content="Replace" Tag="replace"/><ComboBoxItem Content="Remove word" Tag="remove"/><ComboBoxItem Content="Block message" Tag="block"/></ComboBox>
+    <TextBlock Text="Action" Margin="0,0,0,6"/><ComboBox Name="Action"><ComboBoxItem Content="Replace" Tag="replace"/><ComboBoxItem Content="Audio Stim" Tag="stim"/><ComboBoxItem Content="Remove word" Tag="remove"/><ComboBoxItem Content="Block message" Tag="block"/></ComboBox>
+    <ComboBox Name="StimSelection" Visibility="Collapsed" Margin="0,10,0,0"/>
     <TextBlock Text="Say instead" Margin="0,16,0,6"/><PasswordBox Name="ReplacementHidden"/><TextBox Name="Replacement" Visibility="Collapsed"/>
     <TextBlock Text="For random alternatives, separate replacements with commas. Leave empty for silence." Foreground="#B9B2C2" TextWrapping="Wrap" Margin="0,8,0,0"/>
     <TextBlock Name="Error" Foreground="#E4AABE" TextWrapping="Wrap" Margin="0,12,0,0"/>

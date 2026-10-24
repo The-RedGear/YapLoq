@@ -1890,6 +1890,7 @@ function Complete-VoiceRefresh($result, $deviceResult = $null) {
         if(-not$PreviewDeviceBox.Items.Contains($selectedPreview)){[void]$PreviewDeviceBox.Items.Add($selectedPreview)}
         $PreviewDeviceBox.SelectedItem = $selectedPreview
         if ($PreviewDeviceBox.SelectedIndex -lt 0) { $PreviewDeviceBox.SelectedIndex = 0 }
+        if(Get-Command Refresh-AudioStimOutputs -ErrorAction SilentlyContinue){Refresh-AudioStimOutputs -PreserveSelection}
         $script:backendOnline = $true
         $script:serviceHealthAge = Get-Date
         $script:lastVoiceErrors = @($result.errors)
@@ -2674,6 +2675,11 @@ function Get-VoiceAccent([string]$color) {
     return '#B6A3FF'
 }
 
+function Get-VoiceIconRunner {
+    $runners=@($env:YAPLOQ_ICON_RUNNER,$env:YAPLOQ_UPDATE_EXE,(Join-Path $appRoot 'YapLoq.exe'),(Join-Path $appRoot 'YapLoq-preview.exe'))
+    return $runners | Where-Object {$_ -and (Test-Path -LiteralPath $_ -PathType Leaf)} | Select-Object -First 1
+}
+
 function Resolve-VoiceIcon([string]$identifier, [switch]$Fetch, [string]$Color='#B6A3FF') {
     if (-not $script:mdiVoiceIcons) {
         $script:mdiVoiceIcons=Get-Content -LiteralPath (Join-Path $resourceRoot 'assets\mdi-icons.json') -Raw | ConvertFrom-Json
@@ -2684,11 +2690,15 @@ function Resolve-VoiceIcon([string]$identifier, [switch]$Fetch, [string]$Color='
     if(-not$id.StartsWith('mdi:')){
         $cache=Join-Path $configDir ('icon-cache\'+$id.Replace(':','--')+'.png')
         if($Fetch -and -not(Test-Path -LiteralPath $cache)){
-            $runner=if($env:YAPLOQ_ICON_RUNNER){$env:YAPLOQ_ICON_RUNNER}else{Join-Path $appRoot 'YapLoq-preview.exe'}
-            $process=[Diagnostics.ProcessStartInfo]::new();$process.FileName=$runner;$process.UseShellExecute=$false;$process.CreateNoWindow=$true
-            $process.Arguments='--render-icon-output '+$id+' "'+$cache+'"'
-            $child=[Diagnostics.Process]::Start($process)
-            if(-not$child.WaitForExit(12000)){ $child.Kill() }
+            $runner=Get-VoiceIconRunner
+            if($runner){
+                try{
+                    $process=[Diagnostics.ProcessStartInfo]::new();$process.FileName=$runner;$process.UseShellExecute=$false;$process.CreateNoWindow=$true
+                    $process.Arguments='--render-icon-output '+$id+' "'+$cache+'"'
+                    $child=[Diagnostics.Process]::Start($process)
+                    if($child){try{if(-not$child.WaitForExit(12000)){ $child.Kill() }}finally{$child.Dispose()}}
+                }catch{Write-Warning ('Could not render voice icon '+$id+': '+$_.Exception.Message)}
+            }
         }
         $brush=$null
         if(Test-Path -LiteralPath $cache){
@@ -2857,9 +2867,34 @@ function Refresh-PlaylistGrid($settings) {
         if ($hit) { $PlaylistGrid.SelectedItem = $hit }
     }
 }
+function New-PlaylistVoiceCheck([string]$aliasName,[bool]$selected) {
+    $cb=[Windows.Controls.CheckBox]::new()
+    $cb.Content=$aliasName
+    $cb.Style=$window.FindResource([Windows.Controls.CheckBox])
+    $cb.Foreground=[Windows.Media.BrushConverter]::new().ConvertFromString('#F6F3FA')
+    $accent='#B6A3FF'
+    if(Get-Command New-AliasChoiceTemplate -ErrorAction SilentlyContinue){
+        $cb.ContentTemplate=New-AliasChoiceTemplate
+        $appearance=[YapLoqAliasChoiceConverter]::new().Convert($aliasName,[object],$null,[Globalization.CultureInfo]::InvariantCulture)
+        $accent=$appearance.AccentBrush.ToString()
+    }
+    # Set the app template explicitly: detached dialog controls must not fall
+    # back to Windows' native white checkbox or black content foreground.
+    $templateSetter=$cb.Style.Setters | Where-Object {$_.Property -eq [Windows.Controls.Control]::TemplateProperty} | Select-Object -First 1
+    if($templateSetter){
+        $markup=[Windows.Markup.XamlWriter]::Save($templateSetter.Value)
+        $markup=$markup.Replace('#FFB6A3FF',$accent).Replace('#B6A3FF',$accent)
+        $cb.Template=[Windows.Markup.XamlReader]::Parse($markup)
+    }
+    $cb.MinHeight=36;$cb.Margin=[Windows.Thickness]::new(4,0,4,2)
+    $cb.HorizontalAlignment='Stretch';$cb.HorizontalContentAlignment='Stretch'
+    $cb.IsChecked=$selected
+    [Windows.Automation.AutomationProperties]::SetName($cb,$aliasName)
+    return $cb
+}
 function Show-PlaylistDialog($existing) {
     [xml]$playlistXaml = @'
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Width="520" Height="560" WindowStartupLocation="CenterOwner" ResizeMode="NoResize" WindowStyle="None" AllowsTransparency="True" Background="Transparent" Foreground="#F6F3FA">
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Width="560" Height="620" MinWidth="520" MinHeight="540" WindowStartupLocation="CenterOwner" ResizeMode="CanResizeWithGrip" WindowStyle="None" AllowsTransparency="True" Background="Transparent" Foreground="#F6F3FA">
  <Border Background="#15131D" BorderBrush="#50485C" BorderThickness="1" CornerRadius="13">
   <Border.Effect><DropShadowEffect Color="#000000" BlurRadius="24" ShadowDepth="7" Opacity="0.5"/></Border.Effect>
   <Grid ClipToBounds="True">
@@ -2870,17 +2905,18 @@ function Show-PlaylistDialog($existing) {
      <Button Name="Close" Content="X" HorizontalAlignment="Right" Width="46" Background="Transparent" BorderThickness="0"/>
     </Grid>
    </Border>
-   <StackPanel Grid.Row="1" Margin="22,18,22,8">
+   <Grid Grid.Row="1" Margin="22,18,22,8">
+    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <TextBlock Text="Playlist name" Foreground="#B9B2C2"/>
-    <TextBox Name="NameBox" Margin="0,7,0,14" Padding="12,10"/>
-    <TextBlock Text="Voices in this playlist" Foreground="#B9B2C2" Margin="0,0,0,8"/>
-    <Border Background="#1E1A27" BorderBrush="#50485C" BorderThickness="1" CornerRadius="8" Height="300">
+    <TextBox Name="NameBox" Grid.Row="1" Tag="Playlist name" Margin="0,7,0,14" Padding="12,10"/>
+    <TextBlock Grid.Row="2" Text="Voices in this playlist" Foreground="#B9B2C2" Margin="0,0,0,8"/>
+    <Border Grid.Row="3" Background="#1E1A27" BorderBrush="#50485C" BorderThickness="1" CornerRadius="8">
      <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="10,8">
       <StackPanel Name="VoiceChecks"/>
      </ScrollViewer>
     </Border>
-    <TextBlock Name="ValidationText" Foreground="#FF8E8E" TextWrapping="Wrap" Margin="0,10,0,0"/>
-   </StackPanel>
+    <TextBlock Name="ValidationText" Grid.Row="4" Foreground="#FF8E8E" TextWrapping="Wrap" Margin="0,10,0,0"/>
+   </Grid>
    <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="22,0,22,18">
     <Button Name="Cancel" Content="Cancel" Width="100" Margin="0,0,10,0"/>
     <Button Name="Save" Content="Save playlist" Width="130" Background="#B6A3FF" Foreground="#15131D" BorderBrush="#B6A3FF" FontWeight="SemiBold"/>
@@ -2907,15 +2943,7 @@ function Show-PlaylistDialog($existing) {
         foreach ($v in @($existing.Voices)) { $selected[[string]$v] = $true }
     }
     foreach ($aliasName in $aliasNames) {
-        $cb = [System.Windows.Controls.CheckBox]::new()
-        $cb.Content = $aliasName
-        if(Get-Command New-AliasChoiceTemplate -ErrorAction SilentlyContinue){
-            $cb.ContentTemplate=New-AliasChoiceTemplate
-            $appearance=[YapLoqAliasChoiceConverter]::new().Convert($aliasName,[object],$null,[Globalization.CultureInfo]::InvariantCulture)
-            $cb.Style=Get-YapLoqDashboardAccentStyle ($window.FindResource([Windows.Controls.CheckBox])) ($appearance.AccentBrush.ToString())
-        }
-        $cb.Margin = [System.Windows.Thickness]::new(0,0,0,8)
-        $cb.IsChecked = [bool]$selected[$aliasName]
+        $cb = New-PlaylistVoiceCheck $aliasName ([bool]$selected[$aliasName])
         [void]$checks.Children.Add($cb)
     }
     $script:playlistDialogResult = $null
@@ -3929,11 +3957,7 @@ $ClearPollyCredentialsButton.Add_Click({
     } catch { $BottomStatus.Text = $_.Exception.Message }
 })
 $BrowseVoiceFolderButton.Add_Click({
-    $picker = [System.Windows.Forms.FolderBrowserDialog]::new()
-    $picker.Description = 'Choose where exported voice files are saved'
-    $picker.ShowNewFolderButton = $true
-    if ($picker.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $VoiceSaveFolderBox.Text = $picker.SelectedPath }
-    $picker.Dispose()
+    try{$folder=Select-YapLoqFolder 'Choose where exported voice files are saved';if($folder){$VoiceSaveFolderBox.Text=$folder}}catch{$BottomStatus.Text=$_.Exception.Message}
 })
 $CopyPayloadButton.Add_Click({ Update-StreamerSpeakPayload; [Windows.Clipboard]::SetText($StreamerPayloadBox.Text) })
 $ExportVoiceAliasBox.Add_SelectionChanged({ Update-StreamerSpeakPayload })

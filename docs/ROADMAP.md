@@ -58,6 +58,37 @@ Defer additional providers and cosmetic expansion until these are verified.
 - [x] Named profiles and profile-switch commands for Streamer.bot scene actions
 
 ## Engines and audio
+### Audio Stims
+
+- [x] Connect local sound files to keywords such as `[Burp]` or `[Fart]`.
+  Each keyword can use one selected file or a library of multiple sounds,
+  populated by selecting files or a folder.
+- [x] Choose a specific sound or weighted random playback for each keyword.
+  Let users adjust each library entry's random-selection weight and preview it.
+- [ ] Provide per-sound audio controls, including volume/gain, trimming and fades,
+  with clipping protection and a preview before applying changes.
+- [x] Play voice and sound segments in their exact input order. Sound tags must
+  not change the active voice; speech after a sound continues with that voice
+  until another voice tag appears.
+- [ ] Show sound segments alongside voice segments in the queue, grouped under
+  the original message. Emit the queue-added trigger once per message, not once
+  per sound or split segment; preserve stable newest-first message ordering.
+- [x] Validate missing/unreadable files and empty libraries, and make voice/sound
+  keyword collisions clear when configuring them rather than guessing at playback.
+- [x] Per-file volume, previews, optional word replacements and playback-start
+  Streamer.bot hooks retaining original viewer identity. Replay hooks are opt-in.
+
+Example:
+
+```text
+[Wallace] oh god I gotta fart! [Fart] [Plankton] Wallace that stinks! Go in the other room [Fart] [Wallace] IM SO SORRY!
+```
+
+This plays Wallace, a sound from the Fart library, Plankton, another selection
+from that library, then Wallace. Random selection happens for each sound tag.
+
+### Existing audio features
+
 - [x] Shared provider registry and adapter documentation
 - [x] Installed Windows voice provider, verified with real synthesis in memory
 - [x] Per-alias output, speed and volume

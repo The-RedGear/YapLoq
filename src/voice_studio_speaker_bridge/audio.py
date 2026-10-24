@@ -126,7 +126,7 @@ class AudioPlayer:
         self.elapsed_seconds = elapsed
         self.remaining_seconds = max(0.0, total - elapsed)
 
-    def play(self, pcm: bytes, cancel_event: Event | None = None) -> bool:
+    def play(self, pcm: bytes, cancel_event: Event | None = None, on_started=None) -> bool:
         with self._condition:
             if cancel_event is not None and cancel_event.is_set():
                 return False
@@ -186,6 +186,11 @@ class AudioPlayer:
             with self._device_lock:
                 self.device = device
                 device.start(callback_stream)
+            if on_started is not None and not (cancel_event is not None and cancel_event.is_set()):
+                try:
+                    on_started()
+                except Exception:
+                    logging.exception('Playback-start hook failed')
             remaining = len(pcm) / (2 * SAMPLE_RATE) + 5
             last_tick = monotonic()
             revision = self.seek_revision

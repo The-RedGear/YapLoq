@@ -123,6 +123,7 @@ class Settings:
         self.automations_migrated = False
         self.output_device = ""
         self.preview_output_device = ""
+        self.audio_stim_output_device = ""
         self.voice_save_folder = ""
         self.max_characters = 500
         self.max_queue = 25
@@ -165,6 +166,7 @@ class Settings:
         self.routing_rules: list[dict] = []
         # Named pools for Speak: playlist:Name → random among listed aliases.
         self.voice_playlists: dict[str, list[str]] = {}
+        self.audio_stims: dict = {}
         self.setup_completed = False
         self.check_updates_on_startup = False
         self.obs_ducking_enabled = False
@@ -264,6 +266,7 @@ class Settings:
             self.streamerbot_finished_delay = max(0.0, min(10.0, float(data.get("streamerbot_finished_delay", self.streamerbot_finished_delay))))
             self.output_device = str(data.get("output_device", self.output_device))
             self.preview_output_device = str(data.get("preview_output_device", self.preview_output_device))
+            self.audio_stim_output_device = str(data.get("audio_stim_output_device", self.audio_stim_output_device))
             self.voice_save_folder = str(data.get("voice_save_folder", self.voice_save_folder))
             self.max_characters = max(1, min(100000, int(data.get("max_characters", self.max_characters))))
             self.max_queue = max(1, min(10000, int(data.get("max_queue", self.max_queue))))
@@ -333,6 +336,12 @@ class Settings:
                 }
             if payload is None:
                 self._loaded_signature = loaded_signature
+            from .audio_stims import validate_libraries
+            self.audio_stims = validate_libraries(data.get('audio_stims') or {}, self.aliases, legacy=True)
+            stim_names = {name.casefold() for name in self.audio_stims}
+            if any(rule['action'] == 'stim' and rule['replacement'].strip().casefold() not in stim_names
+                   for rule in self.profanity_rules):
+                raise ValueError('A censor rule references an unknown Audio Stim')
         except (OSError, ValueError, TypeError, AttributeError, json.JSONDecodeError):
             self.__dict__.clear()
             self.__dict__.update(previous_state)
@@ -472,6 +481,7 @@ class Settings:
                 "streamerbot_finished_delay": self.streamerbot_finished_delay,
                 "output_device": self.output_device,
                 "preview_output_device": self.preview_output_device,
+                "audio_stim_output_device": self.audio_stim_output_device,
                 "voice_save_folder": self.voice_save_folder,
                 "max_characters": self.max_characters,
                 "max_queue": self.max_queue,
@@ -507,7 +517,7 @@ class Settings:
             }
             for key in ("max_message_age", "duplicate_window", "per_user_queue_limit", "persist_queue",
                         "normalize_audio", "fade_audio", "stream_volume", "preview_volume", "routing_rules",
-                        "voice_playlists", "setup_completed",
+                        "voice_playlists", "audio_stims", "setup_completed",
                         "obs_ducking_enabled", "obs_url", "obs_input", "obs_password_encrypted", "obs_duck_volume", "check_updates_on_startup"):
                 payload[key] = getattr(self, key)
             for state in ("received", "generating", "generated", "error", "cancelled"):

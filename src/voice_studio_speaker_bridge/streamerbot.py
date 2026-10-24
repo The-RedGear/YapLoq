@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from queue import Empty, Queue
+from queue import Empty, Full, Queue
 from threading import Event, RLock, Thread, Timer
 from urllib.request import Request, urlopen
 
@@ -35,11 +35,15 @@ class StreamerBotActions:
         self.settings = settings
         self.events = events
         self.pending: Queue[tuple[str, dict] | None] = Queue()
+        self.stim_pending = Queue(maxsize=128)
+        self.stim_thread = Thread(target=self._run_stims, name='Audio Stim hooks', daemon=True)
         self.stop_event = Event()
         self.state_lock = RLock()
         self.finish_timer: Timer | None = None
         self.finish_generation = 0
         self.active_speech_ids: set[str] = set()
+        self.active_stim_ids: set[str] = set()
+        self.speech_session_seen = False
         self.batch_is_playing = False
         self.batch_queued_announced = False
         self.thread = Thread(target=self._run, name="Streamer.bot actions", daemon=True)
@@ -48,6 +52,8 @@ class StreamerBotActions:
     def start(self) -> None:
         if not self.thread.is_alive():
             self.thread.start()
+        if not self.stim_thread.is_alive():
+            self.stim_thread.start()
 
     def shutdown(self) -> None:
         if self.settings.automations_migrated:
@@ -64,10 +70,51 @@ class StreamerBotActions:
         if self.thread.is_alive():
             self.thread.join(timeout=7)
         self.stop_event.set()
+        if self.stim_thread.is_alive():
+            self.stim_thread.join(timeout=4)
 
     def _on_event(self, source: str, event_type: str, data: dict) -> None:
         if data.get('automationOrigin'):
             return
+        # Sounds have their own hooks; they must not start/finish the speech
+        # session or run avatar/puppet speech automation.
+        if source.casefold() == 'texttospeech' and data.get('stim'):
+            speech_id = str(data.get('id', ''))
+            with self.state_lock:
+                if event_type == 'received':
+                    self.active_stim_ids.add(speech_id)
+                    if self.finish_timer is not None:
+                        self.speech_session_seen = True
+                    self._cancel_finished_timer()
+                elif event_type in {'finished', 'cancelled', 'error'}:
+                    self.active_stim_ids.discard(speech_id)
+                    if self.speech_session_seen and not self.active_speech_ids and not self.active_stim_ids:
+                        self.speech_session_seen = False
+                        self.batch_is_playing = False
+                        self.batch_queued_announced = False
+                        self.settings.reload_if_changed()
+                        action = self._configured_action('streamerbot_finished_action') if self._actions_enabled() else None
+                        if action:
+                            self._schedule_finished(action, self._arguments('finished', data))
+            if event_type == 'textqueued':
+                self.events.acknowledge_action(str(data.get('id', '')))
+            return
+        if source == 'audiostim':
+            stim = data.get('stim') or {}
+            if 'preview' in str(data.get('source', '')).casefold() or (data.get('replay') and not stim.get('replay_actions')):
+                return
+            if event_type == 'playing' and stim.get('action') and (stim.get('allow_without_user') or self._has_viewer(data)):
+                arguments = self._arguments(event_type, data)
+                arguments.update(userName=data.get('user', ''), user=data.get('displayName') or data.get('user', ''),
+                                 displayName=data.get('displayName') or data.get('user', ''), userId=data.get('userId', ''),
+                                 userType=data.get('platform', ''), platform=data.get('platform', ''),
+                                 userProfileImageUrl=data.get('userProfileImageUrl', ''), profileImageUrl=data.get('userProfileImageUrl', ''),
+                                 targetUserName=data.get('user', ''), targetUser=data.get('displayName') or data.get('user', ''),
+                                 targetUserProfileImageUrl=data.get('userProfileImageUrl', ''), rawInput=data.get('user', ''))
+                try:
+                    self.stim_pending.put_nowait((stim['action'], arguments))
+                except Full:
+                    self.events.emit('integration', 'error', dict(integration='Audio Stim hook backlog', automationOrigin=True))
         self.settings.reload_if_changed()
         for rule in self.settings.automations:
             if (rule.get('enabled', True) and not rule.get('legacyKey')
@@ -93,6 +140,7 @@ class StreamerBotActions:
         if event_type == "received" and self._actions_enabled():
             with self.state_lock:
                 self.active_speech_ids.add(str(data.get("id", "")))
+                self.speech_session_seen = True
             self._cancel_finished_timer()
             return
         mapped = self.EVENT_SETTINGS.get(event_type.casefold())
@@ -129,8 +177,9 @@ class StreamerBotActions:
             with self.state_lock:
                 if speech_id:
                     self.active_speech_ids.discard(speech_id)
-                queue_is_idle = not self.active_speech_ids
+                queue_is_idle = not self.active_speech_ids and not self.active_stim_ids
                 if queue_is_idle:
+                    self.speech_session_seen = False
                     self.batch_is_playing = False
                     self.batch_queued_announced = False
             if not queue_is_idle:
@@ -162,7 +211,7 @@ class StreamerBotActions:
 
     def _release_finished(self, action: str, arguments: dict, generation: int) -> None:
         with self.state_lock:
-            if generation != self.finish_generation or self.active_speech_ids:
+            if generation != self.finish_generation or self.active_speech_ids or self.active_stim_ids:
                 return
             self.finish_timer = None
         if not self.stop_event.is_set():
@@ -174,6 +223,11 @@ class StreamerBotActions:
             if self.finish_timer is not None:
                 self.finish_timer.cancel()
                 self.finish_timer = None
+
+    @staticmethod
+    def _has_viewer(data):
+        from .audio_stims import has_viewer
+        return has_viewer(data)
 
     @staticmethod
     def _arguments(state: str, data: dict) -> dict:
@@ -194,7 +248,26 @@ class StreamerBotActions:
             "ttsPublicVoice": str(data.get('publicVoice', '')),
             "ttsReply": str(data.get('reply', '')),
             "ttsReason": str(data.get('reason', '')),
+            "ttsStim": str((data.get('stim') or {}).get('name', '')),
+            "ttsSoundFile": str((data.get('stim') or {}).get('file', '')),
+            "ttsMessageId": str(data.get('messageId', '')),
+            "ttsDisplayName": str(data.get('displayName', '')),
+            "ttsUserProfileImageUrl": str(data.get('userProfileImageUrl', '')),
         }
+
+    def _run_stims(self):
+        while not self.stop_event.is_set():
+            try:
+                action, arguments = self.stim_pending.get(timeout=0.1)
+            except Empty:
+                continue
+            try:
+                self._post_action(action, arguments)
+            except Exception:
+                logging.exception('Audio Stim action dispatch failed')
+                self.events.emit('integration', 'error', dict(integration='Audio Stim action', id=arguments.get('ttsId', ''), automationOrigin=True))
+            finally:
+                self.stim_pending.task_done()
 
     def _actions_enabled(self):
         if self.settings.automations_migrated:
@@ -225,7 +298,7 @@ class StreamerBotActions:
                 return
             if not step.get('enabled', True):
                 continue
-            if rule.get('legacyKey') == 'streamerbot_finished_action' and self.active_speech_ids:
+            if rule.get('legacyKey') == 'streamerbot_finished_action' and (self.active_speech_ids or self.active_stim_ids):
                 return
             try:
                 if step['type'] == 'delay':
@@ -257,7 +330,7 @@ class StreamerBotActions:
             try:
                 with self.state_lock:
                     generic = isinstance(action, dict) and not action.get('legacyKey')
-                    if not generic and arguments.get("ttsState") in {"finished", "cancelled", "error"} and self.active_speech_ids:
+                    if not generic and arguments.get("ttsState") in {"finished", "cancelled", "error"} and (self.active_speech_ids or self.active_stim_ids):
                         continue
                     if not generic and arguments.get("ttsState") in {"queued", "playing"} and arguments.get("ttsId") != "lifecycle-test" and arguments.get("ttsId") not in self.active_speech_ids:
                         continue

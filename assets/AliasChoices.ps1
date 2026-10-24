@@ -43,6 +43,7 @@ function New-AliasChoiceTemplate([string]$path='.'){
     $factory.SetBinding([Windows.Controls.ContentControl]::ContentProperty,$binding)
     $factory.SetValue([Windows.UIElement]::FocusableProperty,$false)
     $factory.SetValue([Windows.UIElement]::IsHitTestVisibleProperty,$false)
+    $factory.SetValue([Windows.Controls.Control]::ForegroundProperty,[Windows.Media.BrushConverter]::new().ConvertFromString('#F6F3FA'))
     $factory.SetValue([Windows.Controls.ContentControl]::ContentTemplateProperty,[Windows.Markup.XamlReader]::Parse('<DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><StackPanel Orientation="Horizontal"><Path Data="{Binding IconGeometry}" Fill="{Binding IconBrush}" Width="18" Height="18" Stretch="Uniform" Margin="0,0,10,0"/><TextBlock Text="{Binding Label}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/></StackPanel></DataTemplate>'))
     $template=[Windows.DataTemplate]::new();$template.VisualTree=$factory;return $template
 }

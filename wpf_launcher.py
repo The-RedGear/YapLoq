@@ -219,6 +219,7 @@ def main() -> int:
     environment["YAPLOQ_UPDATE_TOKEN"] = uuid.uuid4().hex
     if frozen:
         environment["YAPLOQ_UPDATE_EXE"] = str(Path(sys.executable).resolve())
+        environment["YAPLOQ_ICON_RUNNER"] = str(Path(sys.executable).resolve())
     token = str(uuid.uuid4()) if is_preview() else ""
     environment["YAPLOQ_LAUNCH_ID"] = token
 

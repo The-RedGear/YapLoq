@@ -29,6 +29,7 @@ class VoiceAlias:
     public: bool = False
     public_name: str = ''
     viewer_access: str = 'everyone'
+    audio_stim: dict = field(default_factory=dict)
 
     def __post_init__(self):
         self.public = self.public is True
@@ -78,6 +79,7 @@ class VoiceAlias:
             public=value.get('public') is True,
             public_name=str(value.get('public_name') or ''),
             viewer_access=str(value.get('viewer_access') or 'everyone'),
+            audio_stim=dict(value.get('audio_stim') or {}),
         )
 
     def to_dict(self) -> dict:
@@ -99,6 +101,7 @@ class VoiceAlias:
             'public': self.public,
             'public_name': self.public_name,
             'viewer_access': self.viewer_access,
+            'audio_stim': self.audio_stim,
         }
 
 
@@ -131,3 +134,5 @@ class SpeechJob:
     user_id: str = ""
     display_name: str = ""
     segment_index: int = 0
+    message_id: str = ''
+    avatar_url: str = ''

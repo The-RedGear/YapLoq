@@ -94,6 +94,7 @@ function script:Discard-PendingSettings {
         foreach($group in $script:globalSaveGroups.Values){foreach($grid in @($group.Inputs|Where-Object{$_ -is [Windows.Controls.DataGrid]})){[void]$grid.CancelEdit([Windows.Controls.DataGridEditingUnit]::Cell);[void]$grid.CancelEdit([Windows.Controls.DataGridEditingUnit]::Row)}}
         $script:liveValidGroups=@{}
         Refresh-Grid
+        Refresh-AudioStims
         $saved=Read-Settings
         $script:assignmentDefaultPicker.SelectedItem=$null;Update-AssignmentDefaultChoices
         $script:chatVoiceTagsAllEnabled.IsChecked=($saved.chat_voice_tags_all_enabled -ne $false)
@@ -300,6 +301,7 @@ function script:Get-GlobalSaveFingerprint($group){
         }
     })
     if($group.Key -eq 'Actions'){$values+=(@($script:automationRules)|ConvertTo-Json -Depth 30 -Compress)}
+    if($group.Key -eq 'Audio Stims'){$values=@(@($script:stimLibraryGrid.ItemsSource)|ConvertTo-Json -Depth 30 -Compress)}
     $serialized='['+[string]($values|ConvertTo-Json -Depth 32 -Compress)+']'
     $bytes=[Text.Encoding]::UTF8.GetBytes($serialized)
     $hash=[Security.Cryptography.SHA256]::Create()
@@ -481,6 +483,7 @@ function script:Install-GlobalSave {
         if($spec[2]){$button=$window.FindName($spec[2]);if($button){$button.Visibility='Collapsed'}}
     }
     Add-GlobalSaveGroup 'Default voice' @($script:assignmentDefaultPicker) {Save-AssignmentDefault}
+    if($script:stimLibraryGrid){Add-GlobalSaveGroup 'Audio Stims' @($script:stimLibraryGrid,$script:stimFilesGrid,$script:stimKeywordBox,$script:stimActionBox,$script:stimCensorBox,$script:stimEnabledCheck,$script:stimReplayCheck,$script:stimAllowWithoutUserCheck,$script:stimModeBox,$script:stimPauseBox,$script:stimOutputBox) {Save-AudioStims}}
     Add-GlobalSaveGroup 'Speech input' @($script:viewerCommandsEnabled,$script:chatVoiceTagsAllEnabled,$script:splitSpeechSentences) {Save-ViewerCommands}
     $actionInputs=@('AutomationName','AutomationEnabled','AutomationOnError','AutomationConditions','AutomationSteps'|ForEach-Object{Get-AutomationControl $_})
     Add-GlobalSaveGroup 'Actions' $actionInputs {

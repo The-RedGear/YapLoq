@@ -102,10 +102,7 @@ def test_segments_prefix_repeats_and_metadata(engine):
     assert all(job.user == 'Viewer' for job in engine.pending.queue)
 
 
-def test_invalid_later_tag_or_blocked_segment_publishes_nothing(engine):
-    with pytest.raises(ValueError, match='full alias name'):
-        speak(engine, '[Other] valid [Missing] invalid')
-    assert queued(engine) == [] and engine.events.recent() == []
+def test_blocked_segment_publishes_nothing(engine):
     engine.settings.max_characters = 12
     with pytest.raises(ValueError, match='character'):
         speak(engine, '[Other] abcdefgh [EventVoice] ijklmnop')
@@ -216,8 +213,34 @@ def test_short_unique_alias_and_segment_sort_metadata(engine):
     assert jobs[0].timestamp <= jobs[1].timestamp
     assert [engine._job_dict(job)['segmentIndex'] for job in jobs] == [0, 1]
     engine.settings.aliases['Spongebob Another'] = VoiceAlias('Spongebob Another')
-    with pytest.raises(ValueError, match='full alias name'):
-        speak(engine, '[Spongebob] ambiguous')
+    speak(engine, '[Spongebob] ambiguous')
+    assert queued(engine)[-1] == ('[Spongebob] ambiguous', 'EventVoice')
+
+
+@pytest.mark.parametrize('text,expected', [
+    ('A painful weekend [laughter]', [('A painful weekend [laughter]', 'EventVoice')]),
+    ('[Othre] Hello', [('[Othre] Hello', 'EventVoice')]),
+    ('[laughter]', [('[laughter]', 'EventVoice')]),
+    ('[Other] Hello [laughter] there [EventVoice] Goodbye',
+     [('Hello [laughter] there', 'Other'), ('Goodbye', 'EventVoice')]),
+    ('Intro [unknown] words [Other] Hello',
+     [('Intro [unknown] words', 'EventVoice'), ('Hello', 'Other')]),
+    ('[note] ' * 21 + 'Hello', [('[note] ' * 21 + 'Hello', 'EventVoice')]),
+])
+def test_unknown_brackets_preserve_speech_and_current_or_default_voice(engine, text, expected):
+    events = []
+    engine.events.subscribe(lambda source, event, data: events.append(event))
+    speak(engine, text, platform='twitch', userId='123')
+    assert queued(engine) == expected
+    assert events.count('queueadded') == 1
+
+
+def test_megas_original_message_is_queued_without_live_provider_calls(engine):
+    text = ('I just went for a short bike ride for the first time in years, '
+            'my legs feel like noodles. Gonna be a painful weekend [laughter]')
+    result = speak(engine, text, platform='twitch', userId='mega-test', user='Mega')
+    assert queued(engine) == [(text, 'EventVoice')]
+    assert len(result['speechIds']) == 1
 
 
 @pytest.mark.parametrize('packet', [

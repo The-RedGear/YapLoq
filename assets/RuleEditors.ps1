@@ -63,8 +63,9 @@ function Update-ProfanityDisplay {
     $terms = New-Object 'System.Collections.Generic.List[string]'
     foreach ($row in @($script:profanityGrid.ItemsSource)) {
         $row.DisplayWord = if ($script:profanityShow.IsChecked) { $row.Word } else { '****' }
-        $row.DisplayReplacement = if ($script:profanityShow.IsChecked) { $row.Replacement } elseif ($row.Replacement) { '****' } else { '-' }
-        foreach ($term in @($row.Word) + @($row.Variants) + @($row.Replacement -split ',')) {
+        $row.DisplayReplacement = if ($script:profanityShow.IsChecked -or $row.Action -eq 'stim') { $row.Replacement } elseif ($row.Replacement) { '****' } else { '-' }
+        $replacements=if($row.Action -eq 'stim'){@()}else{@($row.Replacement -split ',')}
+        foreach ($term in @($row.Word) + @($row.Variants) + $replacements) {
             if ($term.Trim()) { $terms.Add([regex]::Escape($term.Trim())) }
         }
     }
@@ -83,7 +84,7 @@ function Load-ProfanityRules($settings) {
     $rules = if ($null -ne $settings.profanity_rules) { @($settings.profanity_rules) } else { @(Get-ProfanityDefaults) }
     $rows = New-Object 'System.Collections.ObjectModel.ObservableCollection[object]'
     foreach ($r in $rules) {
-        $label = switch ($r.action) { 'block' {'Block message'} 'remove' {'Remove word'} default {'Replace'} }
+        $label = switch ($r.action) { 'stim' {'Audio Stim'} 'block' {'Block message'} 'remove' {'Remove word'} default {'Replace'} }
         $rows.Add([pscustomobject]@{Word=[string]$r.word;Variants=@($r.variants);Enabled=[bool]$r.enabled;MatchVariants=[bool]$r.match_variants;Action=[string]$r.action;Replacement=[string]$r.replacement;DisplayWord='****';DisplayReplacement='****';ActionLabel=$label;FormCount=$(if($r.match_variants){1+@($r.variants).Count}else{1})})
     }
     $script:profanityGrid.ItemsSource = $rows
@@ -98,6 +99,9 @@ function Show-ProfanityDialog($row) {
         $d.FindName($name).Text=$value; $d.FindName($name+'Hidden').Password=$value
     }
     $action.SelectedIndex=0
+    $stimPicker=$d.FindName('StimSelection');$stimSettings=Read-Settings
+    if($stimSettings.audio_stims){foreach($name in $stimSettings.audio_stims.PSObject.Properties.Name){[void]$stimPicker.Items.Add($name)}}
+    if($row -and $row.Action -eq 'stim'){$stimPicker.SelectedItem=$row.Replacement}
     if($row){$forms.IsChecked=$row.MatchVariants;foreach($i in $action.Items){if($i.Tag -eq $row.Action){$action.SelectedItem=$i}}}
     $show.Add_Click({
         foreach($name in @('Word','Variants','Replacement')) {
@@ -105,13 +109,19 @@ function Show-ProfanityDialog($row) {
             if($show.IsChecked){$plain.Text=$hidden.Password;$plain.Visibility='Visible';$hidden.Visibility='Collapsed'}else{$hidden.Password=$plain.Text;$plain.Visibility='Collapsed';$hidden.Visibility='Visible'}
         }
     })
-    $action.Add_SelectionChanged({$enabled=$action.SelectedItem.Tag -eq 'replace';$d.FindName('Replacement').IsEnabled=$enabled;$d.FindName('ReplacementHidden').IsEnabled=$enabled})
+    $action.Add_SelectionChanged({$enabled=$action.SelectedItem.Tag -eq 'replace';$d.FindName('Replacement').IsEnabled=$enabled;$d.FindName('ReplacementHidden').IsEnabled=$enabled;$d.FindName('StimSelection').Visibility=if($action.SelectedItem.Tag -eq 'stim'){'Visible'}else{'Collapsed'}})
+    $stimPicker.Visibility=if($action.SelectedItem.Tag -eq 'stim'){'Visible'}else{'Collapsed'}
+    $d.FindName('Replacement').IsEnabled=($action.SelectedItem.Tag -eq 'replace');$d.FindName('ReplacementHidden').IsEnabled=($action.SelectedItem.Tag -eq 'replace')
     $d.FindName('TitleBar').Add_MouseLeftButtonDown({$d.DragMove()})
     $d.FindName('Close').Add_Click({$d.Close()});$d.FindName('Cancel').Add_Click({$d.Close()})
     $script:profanityDialogResult=$null
     $d.FindName('Save').Add_Click({
         $values=@{};foreach($name in @('Word','Variants','Replacement')){$values[$name]=if($show.IsChecked){$d.FindName($name).Text.Trim()}else{$d.FindName($name+'Hidden').Password.Trim()}}
         if(-not $values.Word){$d.FindName('Error').Text='Enter a word or phrase.';return}
+        if($action.SelectedItem.Tag -eq 'stim'){
+            if(-not $d.FindName('StimSelection').SelectedItem){$d.FindName('Error').Text='Choose an Audio Stim. Create it on the Audio Stims page first.';return}
+            $values.Replacement=[string]$d.FindName('StimSelection').SelectedItem
+        }
         foreach($existing in @($script:profanityGrid.ItemsSource)){if($existing -ne $row -and $existing.Word -eq $values.Word){$d.FindName('Error').Text='That word already has a rule.';return}}
         $script:profanityDialogResult=[pscustomobject]@{word=$values.Word;variants=@($values.Variants -split ',' | ForEach-Object {$_.Trim()} | Where-Object {$_});enabled=$(if($row){$row.Enabled}else{$true});match_variants=[bool]$forms.IsChecked;action=[string]$action.SelectedItem.Tag;replacement=$values.Replacement}
         $d.DialogResult=$true

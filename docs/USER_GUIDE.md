@@ -2,7 +2,23 @@
 
 For YapLoq 0.6.3 on Windows 10/11, 64-bit.
 
-## Get started
+## Audio Stims
+
+**Playback** can use a library sound, pause instead of a sound, or pause only when viewer information is missing. Set a pause from 0.1 to 60 seconds. Pauses stay in queue order and do not change the current voice. If Streamer.bot supplies the sound, use Pause instead of sound and choose its action. Actions without viewer information still require the separate opt-in checkbox.
+
+**Test random** previews a weighted pick from the current library, including unsaved file/volume/weight edits. It never runs Streamer.bot actions. The optional action dropdown loads automatically and filters as you type; selecting an action keeps its ID so renames do not break the connection.
+
+Select a keyword, then use **Output for this keyword** to choose its device, Windows default, or **Same as TTS output**. Each keyword keeps its own routing, including previews. Changes apply live; Save keeps them after restarting. Sound-only inputs do not run speech queue/avatar hooks; their own Audio Stim hooks still work.
+
+Open **Audio Stims**, add a keyword such as `Fart`, then add sound files or a folder. Type `[Fart]` inside a speech message to play a sound at that point. Speech afterward keeps the same voice until another voice tag changes it.
+
+Each file has volume from 0 (muted) to 100 (maximum) and random weight from 1 to 100. Higher weights are selected more often; uncheck a file to exclude it. Keep one enabled file to always use that sound. Folder selection adds its current files; add the folder again to pick up new files. Supported formats: WAV, MP3, OGG and FLAC, up to 64 MB and five minutes per file.
+
+Use **Preview** to check the selected sound. Optional replacement words play the stim instead of speaking those words. The Censor editor also offers an **Audio Stim** replacement. Inline stims use plain text, not SSML.
+
+An optional Streamer.bot action runs when sound playback starts. Enter its exact name or ID. It receives the original viewer's `userName`, `displayName`, `userId`, platform and profile image when supplied, plus `ttsStim`, `ttsSoundFile` and `ttsMessageId`. Previews never run actions; replays only run them when explicitly enabled. Streamer.bot connection failures do not stop audio playback.
+
+## First launch
 
 1. Download **YapLoq-Windows-x64-update.zip** from the
    [latest release](https://github.com/The-RedGear/YapLoq/releases/latest).
@@ -108,6 +124,11 @@ To switch voices within one input, use alias names in brackets:
 Each part gets its own clip and plays in message order. Use full alias names
 when a shortened name is ambiguous. An explicit voice selection overrides the
 normal assignment for that part.
+
+Unrecognized or ambiguous brackets, such as `[laughter]` or a misspelled name,
+stay in the text and use the current voice (or your default before any voice
+switch). They do not reject the message. Known disabled or restricted voices
+still follow their access rules.
 
 Under **Settings → Speech input**, you can also enable sentence splitting.
 It is off by default and can add pauses and provider requests. Splitting keeps

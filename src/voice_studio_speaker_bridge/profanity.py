@@ -36,7 +36,7 @@ def normalize_rules(value: object) -> list[dict]:
         result.append({"word": word, "variants": [str(f).strip()[:120] for f in forms[:100] if str(f).strip()],
                        "enabled": bool(rule.get("enabled", True)),
                        "match_variants": bool(rule.get("match_variants", True)),
-                       "action": rule.get("action") if rule.get("action") in ("replace", "remove", "block") else "replace",
+                       "action": rule.get("action") if rule.get("action") in ("replace", "remove", "block", "stim") else "replace",
                        "replacement": str(rule.get("replacement", "bleep"))[:1000]})
     return result
 
@@ -60,6 +60,8 @@ def _edits(text: str, rules: list[dict]) -> list[tuple[int, int, str]]:
         rule = named[match.lastgroup][1]
         if rule["action"] == "remove":
             return ""
+        if rule['action'] == 'stim':
+            return '[' + rule.get('replacement', '').strip() + ']'
         choices = [s.strip() for s in rule.get("replacement", "").split(",") if s.strip()]
         return random.choice(choices) if choices else ""
 
@@ -90,7 +92,10 @@ def filter_ssml(root, rules: list[dict]) -> None:
             add(child, "tail")
 
     visit(root)
-    changes = _edits("".join(s[2] for s in slots), rules)
+    combined = "".join(s[2] for s in slots)
+    if _edits(combined, [rule for rule in rules if rule['action'] == 'stim']):
+        raise ValueError('Audio Stim censor replacements require plain text, not SSML')
+    changes = _edits(combined, rules)
     for node, attribute, value, offset in slots:
         for start, end, replacement in reversed(changes):
             left, right = max(start, offset), min(end, offset + len(value))

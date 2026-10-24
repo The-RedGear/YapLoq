@@ -1,4 +1,5 @@
 # Incremental WPF shell. Existing controls and handlers retain their state and storage.
+. (Join-Path $resourceRoot 'assets/FilePickers.ps1')
 . (Join-Path $resourceRoot 'assets\Automations.ps1')
 . (Join-Path $resourceRoot 'assets\Viewers.ps1')
 . (Join-Path $resourceRoot 'assets\AliasChoices.ps1')
@@ -172,6 +173,10 @@ function New-YapLoqButton([string]$label, [string]$route, [string]$iconSource = 
         [void]$panel.Children.Add($path)
     }
     $text = [Windows.Controls.TextBlock]::new(); $text.Text = $label; $text.VerticalAlignment = 'Center'
+    if($label -eq 'AudioStims' -and $panel.Children.Count){
+        $panel.Children[0].Data=[Windows.Media.Geometry]::Parse('M2 9H4V15H2Z M7 5H9V19H7Z M11 2H13V22H11Z M15 5H17V19H15Z M20 9H22V15H20Z')
+        $panel.Children[0].Tag='audio-stims-waveform'
+    }
     if($label -eq 'Assignments' -and $panel.Children.Count){$panel.Children[0].Data=(Resolve-VoiceIcon 'mdi:account-switch-outline').Geometry}
     if ($label -eq 'Playlists' -and $panel.Children.Count) {
         $panel.Children[0].Data = [Windows.Media.Geometry]::Parse('M3 4H17V6H3Z M3 9H17V11H3Z M3 14H11V16H3Z M15 13L22 17L15 21Z')
@@ -1494,9 +1499,10 @@ function Install-YapLoqShell {
     [Windows.Automation.AutomationProperties]::SetName($MinimizeButton,('Minimize '+$script:appLabel))
     foreach ($name in @('AmbientGlowA','AmbientGlowB')) { $window.FindName($name).Visibility = 'Collapsed' }
     $script:providerRoutes = @(@('Windows voices','windowsService'),@('VoiceStudio','voicestudio'),@('Amazon Polly','polly'),@('ElevenLabs','elevenlabs'),@('Azure','azure'),@('Google','google'),@('Watson','watson'),@('UberDuck','uberduck'),@('TTS.Monster','ttsmonster'),@('Acapela','acapela'),@('CereProc','cereproc'))
-    $script:ownerLastPage = @{Dashboard='playground';Voices='voices';Queue='queue';Services='services';Integrations='streamerbot';Settings='settings'}
+    $script:ownerLastPage = @{Dashboard='playground';Voices='voices';AudioStims='stims';Queue='queue';Services='services';Integrations='streamerbot';Settings='settings'}
     $script:ownerSections = @{
         Dashboard=@()
+        AudioStims=@()
         Voices=@(@('Voices','voices','VoicesNav'),@('Playlists','playlists','RulesNav'),@('Routing','routing','RulesNav'),@('Pronunciation','pronunciation','PronunciationNav'),@('Censor','censor','RulesNav'))
         Queue=@(@('Queue','queue','QueueNav'),@('Rules','rules','RulesNav'))
         Integrations=@()
@@ -1505,6 +1511,7 @@ function Install-YapLoqShell {
     $script:routeOwners = @{playground='Dashboard';voices='Voices';playlists='Voices';routing='Voices';voiceRules='Voices';pronunciation='Voices';queue='Queue';history='Queue';rules='Queue';services='Services';streamerbot='Integrations';settings='Settings';activity='Settings'}
     foreach ($entry in $script:providerRoutes) { $script:routeOwners[$entry[1]] = 'Services' }
     $script:routeOwners['censor'] = 'Voices'
+    $script:routeOwners['stims'] = 'AudioStims'
     $script:shellContent = $VoicesPage.Parent
     $row = [Windows.Controls.RowDefinition]::new(); $row.Height = 0
     $script:shellContent.RowDefinitions.Insert(1,$row)
@@ -1576,9 +1583,10 @@ function Install-YapLoqShell {
     Install-YapLoqServices
     $navigation = $VoicesNav.Parent; $navigation.Children.Clear()
     $script:yaploqNav = @{}
-    foreach ($entry in @(@('Dashboard','PlaygroundNav'),@('Voices','VoicesNav'),@('Queue','QueueNav'),@('Services','ServicesToggle'),@('Integrations','StreamerBotNav'),@('Settings','SettingsNav'))) {
+    foreach ($entry in @(@('Dashboard','PlaygroundNav'),@('Voices','VoicesNav'),@('AudioStims','QueueNav'),@('Queue','QueueNav'),@('Services','ServicesToggle'),@('Integrations','StreamerBotNav'),@('Settings','SettingsNav'))) {
         $button = New-YapLoqButton $entry[0] ('owner:'+$entry[0]) $entry[1]
         if ($entry[0] -eq 'Integrations') { $button.Content.Children[1].Text='Streamer.Bot';$button.ToolTip='Streamer.Bot';[Windows.Automation.AutomationProperties]::SetName($button,'Streamer.Bot') }
+        if ($entry[0] -eq 'AudioStims') { $button.Content.Children[1].Text='Audio Stims';$button.ToolTip='Audio Stims';[Windows.Automation.AutomationProperties]::SetName($button,'Audio Stims') }
         $script:yaploqNav[$entry[0]] = $button; [void]$navigation.Children.Add($button)
     }
     Install-YapLoqChrome
@@ -1655,6 +1663,8 @@ function Install-YapLoqShell {
         try{Invoke-BridgePost '/api/integrations/udp-test' @{} | Out-Null;$window.FindName('StreamerListenerTestResult').Text='Testing local listener...';$script:playerStateNext=0}
         catch{$window.FindName('StreamerListenerTestResult').Text=$_.Exception.Message}
     })
+    . (Join-Path $resourceRoot 'assets/AudioStims.ps1')
+    Install-AudioStims
     Set-YapLoqRuntimeControls
     $PageHeadingHost.Margin = '0'; $PageHeadingHost.Parent.Margin = '0,0,0,12'
     Set-Page 'playground'

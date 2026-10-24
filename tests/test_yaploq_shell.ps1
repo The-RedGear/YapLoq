@@ -92,7 +92,7 @@ if($window.FindResource('Accent').Color.ToString() -ne '#FFB6A3FF' -or $SaveVoic
 $AliasSearchBox.Text='no match';Filter-VoiceAliases
 if($script:dashboardVoicePicker.Items.Count -ne 2){throw 'Voice search filtered the Dashboard picker'}
 $AliasSearchBox.Text='';Filter-VoiceAliases
-if (($script:yaploqNav.Keys | Sort-Object) -join ',' -ne 'Dashboard,Integrations,Queue,Services,Settings,Voices') { throw 'Expected exactly six navigation entries' }
+if (($script:yaploqNav.Keys | Sort-Object) -join ',' -ne 'AudioStims,Dashboard,Integrations,Queue,Services,Settings,Voices') { throw 'Expected seven navigation entries including Audio Stims' }
 if ($VoicesNav.Parent) { throw 'Legacy navigation is still in the visible shell' }
 if ($PlaylistGrid.Parent.Parent.Parent.Parent -eq $RulesPage.Content) { throw 'Playlist editor still belongs to message rules' }
 if (-not $script:yaploqPages.playlists.Content.Children.Count) { throw 'Playlist editor was lost' }

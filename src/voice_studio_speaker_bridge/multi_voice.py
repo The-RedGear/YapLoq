@@ -38,15 +38,25 @@ def split_voices(text, default_alias, resolve):
     matches = list(TAG.finditer(text))
     if not matches:
         return [(text.replace(r'\[', '['), default_alias)]
-    if len(matches) > 20:
-        raise ValueError('Use at most 20 voice tags per input')
     result = []
     alias, cursor = default_alias, 0
+    voice_tags = 0
     for match in matches:
+        selected = resolve(match[1].strip())
+        if selected is None:
+            # Ordinary bracketed text (or a typo) is not a voice switch.
+            # Leave it in the current segment, including trailing stage cues.
+            continue
+        voice_tags += 1
+        if voice_tags > 20:
+            raise ValueError('Use at most 20 voice tags per input')
         segment = text[cursor:match.start()].replace(r'\[', '[').strip()
         if segment:
             result.append((segment, alias))
-        alias = resolve(match[1].strip())
+        if getattr(selected, 'provider', '') == 'audio-stim':
+            result.append((match[0], selected))
+        else:
+            alias = selected
         cursor = match.end()
     segment = text[cursor:].replace(r'\[', '[').strip()
     if segment:

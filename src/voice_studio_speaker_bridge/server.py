@@ -217,6 +217,46 @@ class BridgeServers:
                 })
 
             def do_POST(self) -> None:
+                if self.path.rstrip('/') in {'/api/stims/validate', '/api/stims/preview'}:
+                    try:
+                        from .audio_stims import validate_libraries
+                        from .models import VoiceAlias
+                        size = int(self.headers.get('Content-Length', '0'))
+                        if not 0 < size <= 1000000:
+                            raise ValueError('Invalid Audio Stim request size')
+                        data = json.loads(self.rfile.read(size))
+                        if not isinstance(data, dict):
+                            raise ValueError('Audio Stim request must be an object')
+                        if self.path.rstrip('/').endswith('validate'):
+                            libraries = validate_libraries(data.get('libraries'), bridge.settings.aliases)
+                            self._reply(200, dict(ok=True, result=dict(libraries=libraries)))
+                        else:
+                            keyword = str(data.get('keyword') or 'Audio Stim').strip()
+                            if not keyword or len(keyword) > 64 or any(c in keyword for c in '[]\r\n'):
+                                raise ValueError('Enter a valid Audio Stim keyword')
+                            pause_seconds = None
+                            if 'library' in data:
+                                from types import SimpleNamespace
+                                from .audio_stims import resolve_stim
+                                libraries = validate_libraries({'Preview': data['library']})
+                                libraries['Preview']['enabled'] = True
+                                selected = resolve_stim(SimpleNamespace(audio_stims=libraries, output_device=bridge.settings.output_device), 'Preview')
+                                file = dict(path=selected.voice_id, volume=selected.volume)
+                                pause_seconds = selected.audio_stim.get('pause_seconds')
+                            else:
+                                libraries = validate_libraries({'Preview': {'files': [dict(path=data.get('path', ''), volume=data.get('volume', 1))]}})
+                                file = libraries['Preview']['files'][0]
+                            alias = VoiceAlias(keyword, provider='audio-stim', voice_id=file['path'], volume=file['volume'],
+                                               audio_stim=dict(name=keyword, file=file['path'], action='', replay_actions=False))
+                            if pause_seconds:
+                                alias.audio_stim['pause_seconds'] = pause_seconds
+                            if 'output_device' in data:
+                                alias.output_device = str(data['output_device']) or bridge.settings.output_device or '[Default]'
+                            job = bridge.protocol.engine.enqueue('[' + keyword + ']', alias, source='Audio Stim preview')
+                            self._reply(200, dict(ok=True, result=dict(speechId=job.speech_id, file=file['path'])))
+                    except (ValueError, TypeError, OSError, KeyError) as exc:
+                        self._reply(400, dict(ok=False, error=str(exc)))
+                    return
                 if self.path.startswith('/api/updates/'):
                     expected = os.environ.get('YAPLOQ_UPDATE_TOKEN', '')
                     supplied = self.headers.get('X-YapLoq-Update-Token', '')
