@@ -1,4 +1,4 @@
-param([string]$OutputDirectory = '')
+param([string]$OutputDirectory = '',[switch]$KeepWindowOpen)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName PresentationFramework,PresentationCore,WindowsBase,System.Xaml,System.Windows.Forms,System.Drawing,System.Security
 $appRoot = Split-Path -Parent $PSScriptRoot
@@ -478,5 +478,5 @@ if($OutputDirectory){
     $bitmap=[Windows.Media.Imaging.RenderTargetBitmap]::new([int]$window.ActualWidth,[int]$window.ActualHeight,96,96,[Windows.Media.PixelFormats]::Pbgra32);$bitmap.Render($window)
     $encoder=[Windows.Media.Imaging.PngBitmapEncoder]::new();$encoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($bitmap));$stream=[IO.File]::Create((Join-Path $OutputDirectory 'queue-group.png'));try{$encoder.Save($stream)}finally{$stream.Dispose()}
 }
-$window.Close()
+if(-not $KeepWindowOpen){$window.Close()}
 'YapLoq shell passed: six routes, unified rules, Dashboard state, 14 views at two sizes, 132 provider selections, repeated sidebar/hover events, direct service back navigation and failed-route recovery.'

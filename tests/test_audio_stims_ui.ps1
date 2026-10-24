@@ -10,6 +10,7 @@ Initialize-YapLoqFilePickers
 Set-Page 'stims'
 $click=[Windows.Controls.Button]::ClickEvent
 if(-not $script:stimView.FindName('Edit') -or -not $script:stimSearchBox){throw 'Alias-style list toolbar missing'}
+if(-not $script:stimLibraryGrid.IsReadOnly -or -not $script:stimFilesGrid.IsReadOnly){throw 'Direct-bound sound controls must not start table edit transactions'}
 $script:stimView.FindName('Add').RaiseEvent([Windows.RoutedEventArgs]::new($click))
 if(-not $script:stimDialogOpen -or -not $script:testStimDialog.Resources['AppDialogChrome']){throw 'Add must open a themed popup'}
 $script:stimKeywordBox.Text='Fart';$script:stimKeywordBox.GetBindingExpression([Windows.Controls.TextBox]::TextProperty).UpdateSource()
@@ -43,6 +44,7 @@ $script:stimKeywordBox.Text='Changed';$script:stimKeywordBox.GetBindingExpressio
 $script:stimLibraryGrid.SelectedItem.Files[0].Volume=0
 $dialog.Close()
 if($script:stimLibraryGrid.SelectedItem.Keyword -ne 'Fart' -or $original.Files[0].Volume -ne 25){throw 'Discard did not restore original keyword and sound levels'}
+foreach($grid in @($script:stimLibraryGrid,$script:stimFilesGrid)){$tableView=[Windows.Data.CollectionViewSource]::GetDefaultView($grid.ItemsSource);if($tableView.IsEditingItem -or $tableView.IsAddingNew){throw 'Closing the sound editor left a hidden table transaction'}}
 if($script:stimView.FindName('Editor').Parent){throw 'Editor remained on the main page after close'}
 $script:stimSearchBox.Text='not present';if($script:stimLibraryGrid.Items.Count){throw 'Search did not filter keywords'}
 $script:stimSearchBox.Text='Fart';if($script:stimLibraryGrid.Items.Count -ne 1){throw 'Search did not restore keyword'}

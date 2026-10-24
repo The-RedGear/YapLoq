@@ -158,6 +158,7 @@ function Edit-ProfanityRule([bool]$adding) {
 function Install-ProfanityEditor {
     $panel = Load-Xaml (Join-Path $resourceRoot 'assets\ProfanityPanel.xaml')
     $script:profanityGrid=$panel.FindName('Words');$script:profanityShow=$panel.FindName('ShowWords');$script:profanityEnabled=$panel.FindName('Enabled')
+    $script:profanityGrid.IsReadOnly=$true
     foreach($column in $script:profanityGrid.Columns){if($column -is [Windows.Controls.DataGridTextColumn]){$column.ElementStyle=$window.FindResource('GridText')}}
     $window.FindName('RulesStack').Children.Insert(1,$panel)
     $panel.FindName('Add').Add_Click({Edit-ProfanityRule $true})

@@ -1,6 +1,6 @@
 # YapLoq user guide
 
-For YapLoq 0.6.4 on Windows 10/11, 64-bit.
+For YapLoq 0.6.5 on Windows 10/11, 64-bit.
 
 ## Queue and replay
 
@@ -25,6 +25,8 @@ Open **Audio Stims**, add a keyword such as `Fart`, then add sound files or a fo
 Each file has volume from 0 (muted) to 100 (maximum) and random weight from 1 to 100. Higher weights are selected more often; uncheck a file to exclude it. Keep one enabled file to always use that sound. Folder selection adds its current files; add the folder again to pick up new files. Supported formats: WAV, MP3, OGG and FLAC, up to 64 MB and five minutes per file.
 
 Use **Preview** to check the selected sound. Optional replacement words play the stim instead of speaking those words. The Censor editor also offers an **Audio Stim** replacement. Inline stims use plain text, not SSML.
+
+Detached punctuation immediately after a sound is skipped, so a censored word followed by `?` does not make the next clip start with a stray question mark. Punctuation within the remaining speech is preserved.
 
 An optional Streamer.bot action runs when sound playback starts. Select it from the searchable dropdown or enter its exact name or ID. It receives the original viewer's `userName`, `displayName`, `userId`, platform and profile image when supplied, plus `ttsStim`, `ttsSoundFile` and `ttsMessageId`. Actions require viewer information unless **Allow without viewer information** is enabled. Previews never run actions; replays only run them when explicitly enabled. Streamer.bot connection failures do not stop audio playback.
 

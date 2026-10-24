@@ -138,7 +138,30 @@ def test_missing_library_is_atomic_and_sender_blocklist_applies(setup):
 def test_censor_replacement_splits_without_changing_voice(setup):
     engine,_,_=setup
     submit(engine,'[Wallace] That is STINKY!')
-    assert [(j.text,j.alias.name) for j in engine.pending.queue]==[('That is','Wallace'),('[Fart]','Fart'),('!','Wallace')]
+    assert [(j.text,j.alias.name) for j in engine.pending.queue]==[('That is','Wallace'),('[Fart]','Fart')]
+
+
+@pytest.mark.parametrize('punctuation', ['?', '.', ',', '!', ';', ':', '?!', '...', '…', '！？', ', ! ?'])
+@pytest.mark.parametrize('split_sentences', [False, True])
+def test_censored_sound_drops_only_detached_leading_punctuation(setup, punctuation, split_sentences):
+    engine, _, _ = setup
+    engine.settings.split_speech_sentences = split_sentences
+    submit(engine, f"[Wallace] You are stinky{punctuation} I'll keep this, won't I?")
+    assert [(j.text, j.alias.name) for j in engine.pending.queue] == [
+        ('You are', 'Wallace'), ('[Fart]', 'Fart'), ("I'll keep this, won't I?", 'Wallace')]
+
+
+def test_sound_punctuation_cleanup_skips_empty_parts_and_preserves_real_text(setup):
+    engine, _, _ = setup
+    submit(engine, '[Wallace] Before [Fart]?! [Plankton] .5 seconds, really? [Fart] !')
+    assert [(j.text, j.alias.name) for j in engine.pending.queue] == [
+        ('Before', 'Wallace'), ('[Fart]', 'Fart'), ('.5 seconds, really?', 'Plankton'), ('[Fart]', 'Fart')]
+
+
+def test_voice_only_punctuation_is_unchanged(setup):
+    engine, _, _ = setup
+    submit(engine, '[Wallace] ? Keep this, please!')
+    assert engine.pending.queue[0].text == '? Keep this, please!'
 
 
 def test_settings_roundtrip_and_alias_collisions(setup):
@@ -207,7 +230,7 @@ def test_censor_rules_and_sentence_splitting_preserve_sound_segments(setup):
     engine.settings.profanity_rules=[dict(word='smelly', variants=['smellier'], enabled=True, match_variants=True, action='stim', replacement='Fart')]
     submit(engine,'[Wallace] Hello. This is smellier. [Fart] Goodbye.')
     jobs=list(engine.pending.queue)
-    assert [j.alias.name for j in jobs]==['Wallace','Wallace','Fart','Wallace','Fart','Wallace']
+    assert [j.alias.name for j in jobs]==['Wallace','Wallace','Fart','Fart','Wallace']
     assert len([e for e in engine.events.recent() if e['event']=='queueadded'])==1
 
 

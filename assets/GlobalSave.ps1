@@ -143,13 +143,41 @@ function script:Show-UnsavedChangesPrompt($owner,[string]$context,[scriptblock]$
     return [string]$prompt.Resources['Choice']
 }
 
+function script:Test-SettingsTableErrors($element) {
+    if([Windows.Controls.Validation]::GetHasError($element)){return $true}
+    for($index=0;$index -lt [Windows.Media.VisualTreeHelper]::GetChildrenCount($element);$index++){
+        if(Test-SettingsTableErrors ([Windows.Media.VisualTreeHelper]::GetChild($element,$index))){return $true}
+    }
+    return $false
+}
+
+function script:Complete-SettingsTableEdit($grid) {
+    if(-not $grid -or -not $grid.ItemsSource){return $true}
+    $view=[Windows.Data.CollectionViewSource]::GetDefaultView($grid.ItemsSource)
+    $editable=$view -is [ComponentModel.IEditableCollectionView]
+    $cell=$grid.CommitEdit([Windows.Controls.DataGridEditingUnit]::Cell,$true)
+    $row=$grid.CommitEdit([Windows.Controls.DataGridEditingUnit]::Row,$true)
+    if(Test-SettingsTableErrors $grid){return $false}
+    if($editable -and ($view.IsEditingItem -or $view.IsAddingNew)){
+        $container=if($view.IsEditingItem){$grid.ItemContainerGenerator.ContainerFromItem($view.CurrentEditItem)}else{$null}
+        # Detached popup grids can retain a collection edit after their row editor
+        # is gone. Finish that transaction without canceling any draft values.
+        if((-not $cell -or -not $row) -and $container -and $container.IsEditing -and [Windows.PresentationSource]::FromVisual($grid)){return $false}
+        if($view.IsEditingItem){$view.CommitEdit()}
+        if($view.IsAddingNew){$view.CommitNew()}
+        return -not ($view.IsEditingItem -or $view.IsAddingNew)
+    }
+    # CommitEdit can return false with no edit at all; that is not a save error.
+    return $true
+}
+
 function script:Confirm-GlobalSaveExit {
     if($script:globalSaving){return $false}
     foreach($group in $script:globalSaveGroups.Values){
         foreach($grid in @($group.Inputs|Where-Object{$_ -is [Windows.Controls.DataGrid]})){
-            if(-not $grid.CommitEdit([Windows.Controls.DataGridEditingUnit]::Cell,$true) -or -not $grid.CommitEdit([Windows.Controls.DataGridEditingUnit]::Row,$true)){
-                $BottomStatus.Text='Finish the highlighted table edit before exiting.';return $false
-            }
+            try{
+                if(-not (Complete-SettingsTableEdit $grid)){$BottomStatus.Text='Correct the invalid value in '+$group.Key+' ('+$grid.Name+') before exiting.';return $false}
+            }catch{$BottomStatus.Text='Could not finish '+$group.Key+' ('+$grid.Name+'): '+$_.Exception.Message;return $false}
         }
         Update-GlobalSaveGroup $group.Key
     }
@@ -409,7 +437,7 @@ function script:Show-SaveFeedback([string]$message,[bool]$failed=$false){
     if($script:globalSaveFeedbackCollapseTimer){$script:globalSaveFeedbackCollapseTimer.Stop()}
     $script:lastSaveMessage=$message
     $script:globalSaveFeedback.BeginAnimation([Windows.UIElement]::OpacityProperty,$null);$script:globalSaveFeedback.Opacity=1
-    $script:globalSaveFeedback.Text=if($failed){'Not saved — click for details'}else{$message};$script:globalSaveFeedback.ToolTip='View or copy the full save result'
+    $script:globalSaveFeedback.Text=if($failed){'Not saved - click for details'}else{$message};$script:globalSaveFeedback.ToolTip='View or copy the full save result'
     $script:globalSaveFeedback.Foreground=[Windows.Media.BrushConverter]::new().ConvertFromString($(if($failed){'#E5B96F'}else{'#86C5AE'}))
     $script:globalSaveFeedback.Visibility='Visible'
     $flash=[Windows.Media.Animation.DoubleAnimation]::new();$flash.From=1;$flash.To=0.4;$flash.Duration=[TimeSpan]::FromMilliseconds(180);$flash.AutoReverse=$true;$flash.RepeatBehavior=[Windows.Media.Animation.RepeatBehavior]::new(2);$flash.FillBehavior='Stop'
@@ -418,12 +446,12 @@ function script:Show-SaveFeedback([string]$message,[bool]$failed=$false){
 }
 
 function script:Save-AllPendingChanges {
-    if($script:globalSaving){Show-SaveFeedback 'Save is in progress…';return}
+    if($script:globalSaving){Show-SaveFeedback 'Saving...';return}
     foreach($group in $script:globalSaveGroups.Values){
         foreach($grid in @($group.Inputs|Where-Object{$_ -is [Windows.Controls.DataGrid]})){
             try{
-                if(-not $grid.CommitEdit([Windows.Controls.DataGridEditingUnit]::Cell,$true) -or -not $grid.CommitEdit([Windows.Controls.DataGridEditingUnit]::Row,$true)){$BottomStatus.Text='Not saved - finish the highlighted table edit first.';Show-SaveFeedback $BottomStatus.Text $true;return}
-            }catch{$BottomStatus.Text='Not saved - finish the table edit first.';Show-SaveFeedback $BottomStatus.Text $true;return}
+                if(-not (Complete-SettingsTableEdit $grid)){$BottomStatus.Text='Not saved - correct the invalid value in '+$group.Key+' ('+$grid.Name+').';Show-SaveFeedback $BottomStatus.Text $true;return}
+            }catch{$BottomStatus.Text='Not saved - '+$group.Key+' ('+$grid.Name+'): '+$_.Exception.Message;Show-SaveFeedback $BottomStatus.Text $true;return}
         }
         Update-GlobalSaveGroup $group.Key
     }

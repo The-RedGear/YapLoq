@@ -6,6 +6,9 @@ function script:New-AudioStimSliderColumn([string]$label,[string]$path,[int]$min
     return $column
 }
 function script:Install-AudioStimDialogs {
+    # Checkboxes and sliders update their bound values directly; these tables
+    # have no inline text editors and must not start DataGrid edit transactions.
+    $script:stimLibraryGrid.IsReadOnly=$true;$script:stimFilesGrid.IsReadOnly=$true
     $editor=$script:stimView.FindName('Editor');$main=$editor.Parent;$oldList=$main.Children[0];$toolbar=$oldList.Children[0]
     $sections=@($editor.Children);$identity=$sections[0];$appearance=$sections[3].Child.Content
     $sections[3].Child.Content=$null
@@ -43,6 +46,7 @@ function script:Filter-AudioStimLibraries {
 }
 function script:New-AudioStimEditor([switch]$New){
     if($script:stimDialogOpen){throw 'A sound editor is already open.'}
+    foreach($grid in @($script:stimLibraryGrid,$script:stimFilesGrid)){if(-not (Complete-SettingsTableEdit $grid)){throw 'Correct the invalid value in the sound editor first.'}}
     $original=if($New){$null}else{$script:stimLibraryGrid.SelectedItem};if(-not $New -and -not $original){return $null}
     $script:stimDialogOpen=$true
     if($New){$row=New-AudioStimRow '' @{};$index=$script:stimLibraryGrid.ItemsSource.Count;$script:stimLibraryGrid.ItemsSource.Add($row)}else{
@@ -61,13 +65,21 @@ function script:New-AudioStimEditor([switch]$New){
     $dialog.Content=$layout;Apply-AppFont $dialog;Set-AppDialogChrome $dialog
     $dialog.Add_Closing({param($sender,$e)
         if($sender.Resources['Accepted']){return}
-        $row=$sender.Resources['Row'];$script:stimFilesGrid.CommitEdit()|Out-Null
+        $row=$sender.Resources['Row'];[void](Complete-SettingsTableEdit $script:stimFilesGrid)
         if(($row|ConvertTo-Json -Depth 24 -Compress) -cne $sender.Resources['Baseline']){
             $choice=Show-UnsavedChangesPrompt $sender 'This sound has unsaved changes.' {Save-AudioStims;$script:stimEditorWindow.Resources['Accepted']=$true}
             if($choice -eq 'Cancel'){$e.Cancel=$true}
         }
     })
     $dialog.Add_Closed({param($sender,$e)
+        foreach($grid in @($script:stimFilesGrid,$script:stimLibraryGrid)){
+            [void]$grid.CancelEdit([Windows.Controls.DataGridEditingUnit]::Cell);[void]$grid.CancelEdit([Windows.Controls.DataGridEditingUnit]::Row)
+            $view=[Windows.Data.CollectionViewSource]::GetDefaultView($grid.ItemsSource)
+            if($view -is [ComponentModel.IEditableCollectionView]){
+                if($view.IsAddingNew){$view.CancelNew()}
+                if($view.IsEditingItem){if($view.CanCancelEdit){$view.CancelEdit()}else{$view.CommitEdit()}}
+            }
+        }
         $sender.Resources['EditorScroll'].Content=$null
         $index=[int]$sender.Resources['Index'];$original=$sender.Resources['Original']
         if(-not $sender.Resources['Accepted']){if($original){$script:stimLibraryGrid.ItemsSource[$index]=$original;$script:stimLibraryGrid.SelectedItem=$original}else{$script:stimLibraryGrid.ItemsSource.RemoveAt($index)}}

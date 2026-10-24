@@ -1,5 +1,5 @@
 $ErrorActionPreference='Stop'
-. (Join-Path $PSScriptRoot 'test_yaploq_shell.ps1')
+. (Join-Path $PSScriptRoot 'test_yaploq_shell.ps1') -KeepWindowOpen
 foreach($group in $script:globalSaveGroups.Values){Reset-GlobalSaveGroup $group.Key}
 foreach($credential in $script:credentialFields.Values){
     $original=$credential.Mask.Password
@@ -19,14 +19,22 @@ if($script:globalSaveGroups.Settings.Inputs.Count -lt 15){throw 'Settings tracki
 if($script:globalSaveGroups.ElevenLabs.Inputs.Count -lt 2){throw 'Credential tracking missed its masked/plain inputs'}
 if($script:globalSaveGroups.Rules.Inputs.Count -lt 10 -or $script:globalSaveGroups.Actions.Inputs.Count -lt 5){throw 'Rule/action tracking missed editable controls'}
 if(-not $script:globalSaveButton.IsEnabled -or $script:globalSaveButton.Effect){throw 'Clean Save should be clickable without a glow'}
+$detachedGrid=[Windows.Controls.DataGrid]::new();$detachedGrid.Name='DetachedEditorFixture';$detachedGrid.AutoGenerateColumns=$false
+$detachedRows=[Collections.ObjectModel.ObservableCollection[object]]::new();$detachedRows.Add([pscustomobject]@{Value='preserve this edit'});$detachedGrid.ItemsSource=$detachedRows
+$script:globalSaveGroups.Rules.Inputs+=,$detachedGrid
+Reset-GlobalSaveGroup 'Rules'
+$detachedView=[Windows.Data.CollectionViewSource]::GetDefaultView($detachedRows);$detachedView.EditItem($detachedRows[0])
 $cleanBefore=[IO.File]::ReadAllText($configPath)
 Save-AllPendingChanges
+if($detachedView.IsEditingItem -or $detachedRows[0].Value -ne 'preserve this edit'){throw 'Save failed to finish a hidden collection edit without losing values'}
 if($BottomStatus.Text -ne 'All changes saved.' -or [IO.File]::ReadAllText($configPath) -ne $cleanBefore){throw 'Clean Save did not acknowledge without unnecessary writes'}
 if($script:globalSaveFeedback.Text -ne 'All changes saved' -or $script:globalSaveFeedback.Visibility -ne 'Visible'){throw 'Clean Save did not show title-bar feedback'}
 $parent=$BridgeStatusButton.Parent
 if($parent.Children.IndexOf($script:globalSaveButton) -ne $parent.Children.IndexOf($BridgeStatusButton)-1){throw 'Global Save is not left of service status'}
 if($parent.Children.IndexOf($script:globalSaveFeedback) -ne $parent.Children.IndexOf($script:globalSaveButton)-1){throw 'Save feedback is not left of Save'}
 $MaxQueueSettingBox.Text='44'
+$script:profanityGrid.ItemsSource[0].Variants+= 'save-regression-variant'
+Update-GlobalSaveGroup 'Rules';$detachedView.EditItem($detachedRows[0])
 $ElevenLabsEnabledCheck.IsChecked=-not [bool]$ElevenLabsEnabledCheck.IsChecked
 Update-GlobalSaveGroup 'Settings';Update-GlobalSaveGroup 'ElevenLabs'
 if($script:globalSaveLabel.Text -ne 'Save' -or -not $script:globalSaveButton.Effect -or $script:globalSaveButton.Style -ne $window.FindResource('PrimaryButton')){throw 'Pending edits should show a purple glowing Save without an asterisk'}
@@ -37,16 +45,23 @@ if($MaxQueueSettingBox.Text -ne '44' -or -not $script:globalSaveGroups.Settings.
 if(-not $script:globalSaveGroups.Settings.Dirty -or -not $script:globalSaveGroups.ElevenLabs.Dirty){throw 'Cross-page edits were not tracked'}
 Save-AllPendingChanges
 $saved=Read-Settings
+if(@($saved.profanity_rules|Where-Object{$_.variants -contains 'save-regression-variant'}).Count -ne 1){throw 'A detached table edit blocked saving a censor variant'}
 if($saved.max_queue -ne 44 -or $saved.elevenlabs_enabled -ne [bool]$ElevenLabsEnabledCheck.IsChecked){throw ('Global save lost edits: '+$BottomStatus.Text)}
 if(-not $script:globalSaveButton.IsEnabled -or $script:globalSaveButton.Effect){throw ('Successful save should stay clickable and clear its glow: '+$script:globalSaveButton.ToolTip)}
 if($script:globalSaveFeedback.Text -ne 'Saved'){throw 'Successful save did not report success'}
+$errorBinding=[Windows.Data.Binding]::new('Value');$detachedGrid.DataContext=$detachedRows[0];$errorExpression=$detachedGrid.SetBinding([Windows.FrameworkElement]::TagProperty,$errorBinding)
+$validationError=[Windows.Controls.ValidationError]::new([Windows.Controls.ExceptionValidationRule]::new(),$errorExpression,'Invalid fixture value',$null)
+[Windows.Controls.Validation]::MarkInvalid($errorExpression,$validationError)
+$validBefore=[IO.File]::ReadAllText($configPath);Save-AllPendingChanges
+if([IO.File]::ReadAllText($configPath) -ne $validBefore -or $BottomStatus.Text -notlike '*Rules (DetachedEditorFixture)*' -or $detachedRows[0].Value -ne 'preserve this edit'){throw 'Real validation errors must preserve drafts, identify their section and prevent writes'}
+[Windows.Controls.Validation]::ClearInvalid($errorExpression)
 $before=[IO.File]::ReadAllText($configPath)
 $MaxQueueSettingBox.Text='0';$ElevenLabsEnabledCheck.IsChecked=-not [bool]$ElevenLabsEnabledCheck.IsChecked
 Update-GlobalSaveGroup 'Settings';Update-GlobalSaveGroup 'ElevenLabs'
 Save-AllPendingChanges
 if([IO.File]::ReadAllText($configPath) -ne $before){throw 'Validation failure partially wrote settings'}
 if($BottomStatus.Text -notlike 'Not saved - Settings:*' -or -not $script:globalSaveButton.IsEnabled){throw 'Failed section did not stay visibly pending'}
-if($script:globalSaveFeedback.Text -ne 'Not saved — click for details' -or $script:lastSaveMessage -notlike 'Not saved - Settings:*' -or $script:globalSaveFeedback.Visibility -ne 'Visible'){throw 'Failed Save did not retain full details'}
+if($script:globalSaveFeedback.Text -ne 'Not saved - click for details' -or $script:lastSaveMessage -notlike 'Not saved - Settings:*' -or $script:globalSaveFeedback.Visibility -ne 'Visible'){throw 'Failed Save did not retain full details'}
 $MaxQueueSettingBox.Text='44';$ElevenLabsEnabledCheck.IsChecked=[bool]$saved.elevenlabs_enabled
 Update-GlobalSaveGroup 'Settings';Update-GlobalSaveGroup 'ElevenLabs'
 if(-not $script:globalSaveButton.IsEnabled -or $script:globalSaveButton.Effect){throw 'Reverting pending changes should clear the glow and stay clickable'}
@@ -77,5 +92,6 @@ Show-SaveFeedback 'Feedback timeout test'
 if(-not $script:globalSaveFeedback.HasAnimatedProperties){throw 'Save feedback has no flash animation'}
 $deadline=[DateTime]::UtcNow.AddSeconds(3)
 while($script:globalSaveFeedback.Visibility -eq 'Visible' -and [DateTime]::UtcNow -lt $deadline){$window.Dispatcher.Invoke([Action]{},[Windows.Threading.DispatcherPriority]::Background);Start-Sleep -Milliseconds 10}
-if($script:globalSaveFeedback.Visibility -ne 'Collapsed'){throw 'Save feedback did not disappear'}
+if($script:globalSaveFeedback.Visibility -ne 'Collapsed'){throw ('Save feedback did not disappear: timer='+$script:globalSaveFeedbackTimer.IsEnabled+' collapse='+$script:globalSaveFeedbackCollapseTimer.IsEnabled+' text='+$script:globalSaveFeedback.Text+' interval='+$script:globalSaveFeedbackTimer.Interval+' shutdown='+$window.Dispatcher.HasShutdownStarted)}
+$window.Close()
 'Global Save passed: title position, cross-page edits, validation atomicity, revert and clean state.'

@@ -14,9 +14,9 @@ and before publishing a Windows Release build.
 
 ## Version identity
 
-- [x] `pyproject.toml` / `__version__` / `tools/version_info.txt` report **0.6.4**
+- [x] `pyproject.toml` / `__version__` / `tools/version_info.txt` report **0.6.5**
 - [x] [`docs/RELEASE_NOTES.md`](RELEASE_NOTES.md) drafted for the GitHub Release body
-- [x] USER_GUIDE / CHANGELOG / README aligned to 0.6.4
+- [x] USER_GUIDE / CHANGELOG / README aligned to 0.6.5
 
 ## Security and secrets
 
@@ -47,7 +47,7 @@ and before publishing a Windows Release build.
 - [ ] Smoke Windows + VoiceStudio + at least one cloud provider from Playground and UDP
 - [ ] Publish a YapLoq GitHub Release with its own tag, Windows zip and SHA-256 checksum after preview approval
 - [x] Flip repo to Public after the Release exists
-- Confirm GitHub Tests and Windows release build pass for the exact commit being released. The 0.6.4 local suite has 403 tests, plus Windows UI checks.
+- Confirm GitHub Tests and Windows release build pass for the exact commit being released. The 0.6.5 local suite has 427 tests, plus Windows UI checks.
 - [x] Frozen EXE resource/audio checks and local silent Windows voice/SSML synthesis
 - [x] Anonymous public repository/release access and published download digest verified
 

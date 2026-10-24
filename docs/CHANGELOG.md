@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.5 — 2026-10-24
+
+- Detached punctuation left after a sound replacement no longer becomes speech or a punctuation-only clip. Punctuation within real speech is preserved.
+- Fixed hidden sound-editor transactions blocking unrelated saves or exit. Genuine invalid values remain editable and save errors identify their section and table. Save feedback no longer displays garbled punctuation.
+
 ## 0.6.4 — 2026-10-24
 
 - Added Audio Stims: play local sound files with `[Keyword]` tags, using one sound or a weighted library. Speech continues in order without changing voices.

@@ -10,7 +10,7 @@ function script:New-AudioStimRow([string]$name,$value){
     return [pscustomobject]@{Keyword=$name;IconId=$icon;Color=$color;Accent=$color;AccentBackground=('#33'+$color.Substring(1));OutputDevice=$device;Enabled=($value.enabled -ne $false);Files=$files;Action=[string]$value.action;ReplayActions=($value.replay_actions -eq $true);AllowWithoutUser=($value.allow_without_user -eq $true);PlaybackMode=$(if($value.playback_mode){[string]$value.playback_mode}else{'sound'});PauseSeconds=$(if($value.pause_seconds){[double]$value.pause_seconds}else{1.0});CensorWords=(@($value.censor_words) -join [Environment]::NewLine)}
 }
 function script:Get-AudioStimDraft {
-    [void]$script:stimLibraryGrid.CommitEdit();[void]$script:stimFilesGrid.CommitEdit()
+    foreach($grid in @($script:stimLibraryGrid,$script:stimFilesGrid)){if(-not (Complete-SettingsTableEdit $grid)){throw 'Correct the invalid value in the sound editor before saving.'}}
     $libraries=[ordered]@{}
     foreach($row in $script:stimLibraryGrid.ItemsSource){
         $name=$row.Keyword.Trim()

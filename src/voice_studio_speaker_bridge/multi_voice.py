@@ -2,6 +2,7 @@
 import re
 
 TAG = re.compile(r'(?<!\\)\[([^\[\]\r\n]{1,64})\]')
+ORPHAN_PUNCTUATION = re.compile(r'^(?:[.,!?;:…。！？、，；：]+(?:\s+|$))+')
 
 
 def strip_chat_tokens(text, settings):
@@ -41,6 +42,19 @@ def split_voices(text, default_alias, resolve):
     result = []
     alias, cursor = default_alias, 0
     voice_tags = 0
+    after_stim = False
+
+    def append_speech(raw):
+        nonlocal after_stim
+        segment = raw.replace(r'\[', '[').strip()
+        if after_stim:
+            # A replaced word can leave its punctuation after the sound tag.
+            # Only discard detached leading marks, never punctuation in words
+            # or the remaining sentence (including decimals and contractions).
+            segment = ORPHAN_PUNCTUATION.sub('', segment)
+        if segment:
+            result.append((segment, alias))
+            after_stim = False
     for match in matches:
         selected = resolve(match[1].strip())
         if selected is None:
@@ -50,17 +64,14 @@ def split_voices(text, default_alias, resolve):
         voice_tags += 1
         if voice_tags > 20:
             raise ValueError('Use at most 20 voice tags per input')
-        segment = text[cursor:match.start()].replace(r'\[', '[').strip()
-        if segment:
-            result.append((segment, alias))
+        append_speech(text[cursor:match.start()])
         if getattr(selected, 'provider', '') == 'audio-stim':
             result.append((match[0], selected))
+            after_stim = True
         else:
             alias = selected
         cursor = match.end()
-    segment = text[cursor:].replace(r'\[', '[').strip()
-    if segment:
-        result.append((segment, alias))
+    append_speech(text[cursor:])
     if not result:
         raise ValueError('Add some text after a voice tag')
     return result
