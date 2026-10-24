@@ -38,8 +38,10 @@ Use voice names in brackets, for example:
 [Plankton] Hello! [Spongebob] Hi!
 ```
 
-Each part becomes a separate queue entry and plays in message order. Unknown or
-unavailable voices are reported instead of silently changing the requested voice.
+Each part plays in message order under one expandable message on the Queue page.
+Use enabled alias names; unknown bracket tags remain speech rather than dropping
+the message. Audio Stim tags such as `[Burp]` play between spoken parts without
+changing the current voice.
 
 ## Run Streamer.Bot actions from YapLoq
 

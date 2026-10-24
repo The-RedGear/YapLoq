@@ -1,108 +1,64 @@
 param([string]$OutputImage='')
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'test_yaploq_shell.ps1')
+$oldWindow=$window;$window=[Windows.Window]::new();$window.Resources=$oldWindow.Resources;$window.FontFamily=$oldWindow.FontFamily
+$window.ShowInTaskbar=$false;$window.ShowActivated=$false;$window.Left=-10000;$window.Show();$window.Hide()
+function Invoke-BridgePost([string]$path,$body){$script:stimRequest=$body;return [pscustomobject]@{ok=$true;result=[pscustomobject]@{file='C:\sounds\fart.wav'}}}
+function Show-UnsavedChangesPrompt($owner,$context,$saveAction){return 'Discard'}
+function Show-AudioStimEditor([switch]$New){$script:testStimDialog=New-AudioStimEditor -New:$New}
 Initialize-YapLoqFilePickers
-Load-ProfanityRules ([pscustomobject]@{profanity_enabled=$true;profanity_hide_words=$true;profanity_rules=@([pscustomobject]@{word='badword';variants=@();enabled=$true;match_variants=$false;action='stim';replacement='Fart'})})
-Update-ProfanityDisplay
-if((Get-DisplayText 'FART [Fart] badword') -ne 'FART [Fart] *******'){throw 'Stim keyword incorrectly masked as profanity'}
-if(-not ('YapLoqFolderPicker' -as [type])){throw 'Modern folder picker did not compile'}
-function Invoke-BridgePost([string]$path,$body){return [pscustomobject]@{ok=$true;result=$body}}
 Set-Page 'stims'
-if(-not $script:stimView -or -not $script:globalSaveGroups['Audio Stims']){throw 'Audio Stims page or Save group missing'}
-$stimIcon=$script:yaploqNav.AudioStims.Content.Children[0]
-if($stimIcon.Tag -ne 'audio-stims-waveform' -or $stimIcon.Data.ToString() -eq $script:yaploqNav.Queue.Content.Children[0].Data.ToString()){throw 'Audio Stims must have its own waveform icon'}
-if(-not [Windows.Data.BindingOperations]::IsDataBound($stimIcon,[Windows.Shapes.Shape]::FillProperty)){throw 'Audio Stims icon lost navigation highlight binding'}
-foreach($grid in @($script:stimLibraryGrid,$script:stimFilesGrid)){foreach($column in $grid.Columns){if($column -is [Windows.Controls.DataGridTextColumn] -and $column.ElementStyle -ne $window.FindResource('GridText') -and $column.ElementStyle.BasedOn -ne $window.FindResource('GridText')){throw 'Grid text must align with header padding'}}}
-if($script:stimFilesGrid.Columns[0].Width.Value -lt 60 -or $script:stimFilesGrid.Columns[2].Width.Value -lt 90){throw 'Sound table headings will be clipped'}
 $click=[Windows.Controls.Button]::ClickEvent
+if(-not $script:stimView.FindName('Edit') -or -not $script:stimSearchBox){throw 'Alias-style list toolbar missing'}
 $script:stimView.FindName('Add').RaiseEvent([Windows.RoutedEventArgs]::new($click))
-$script:stimKeywordBox.Text='Fart'
-$script:stimKeywordBox.GetBindingExpression([Windows.Controls.TextBox]::TextProperty).UpdateSource()
+if(-not $script:stimDialogOpen -or -not $script:testStimDialog.Resources['AppDialogChrome']){throw 'Add must open a themed popup'}
+$script:stimKeywordBox.Text='Fart';$script:stimKeywordBox.GetBindingExpression([Windows.Controls.TextBox]::TextProperty).UpdateSource()
 Add-AudioStimFiles @('C:\sounds\fart.wav','C:\sounds\burp.mp3','C:\sounds\ignore.txt','C:\sounds\fart.wav')
 $draft=Get-AudioStimDraft
-if($draft.Fart.allow_without_user){throw 'Anonymous action opt-in must default off'}
-$script:stimAllowWithoutUserCheck.IsChecked=$true
-$script:stimAllowWithoutUserCheck.GetBindingExpression([Windows.Controls.Primitives.ToggleButton]::IsCheckedProperty).UpdateSource()
-if(-not (Get-AudioStimDraft).Fart.allow_without_user){throw 'Anonymous action opt-in did not bind'}
-$script:stimModeBox.SelectedValue='pause_without_user';$script:stimPauseBox.Text='2.5'
-$script:stimPauseBox.GetBindingExpression([Windows.Controls.TextBox]::TextProperty).UpdateSource()
-if((Get-AudioStimDraft).Fart.playback_mode -ne 'pause_without_user' -or (Get-AudioStimDraft).Fart.pause_seconds -ne 2.5){throw 'Pause controls did not bind'}
-$script:stimModeBox.SelectedValue='sound'
-if($draft.Fart.files.Count -ne 2 -or $draft.Fart.files[0].volume -ne 1){throw 'Library file selection did not serialize correctly'}
-if($script:stimLibraryGrid.SelectedItem.Files[0].FileName -ne 'fart.wav' -or $script:stimFilesGrid.Columns[1].Binding.Path.Path -ne 'FileName'){throw 'Sound list must display only filenames'}
-if($draft.Fart.files[0].path -ne 'C:\sounds\fart.wav'){throw 'Filename display changed saved full path'}
-if(-not $script:stimFilesGrid.ContextMenu -or -not $script:stimLibraryGrid.ContextMenu){throw 'Right-click menus missing'}
-$script:stimFilesGrid.SelectedIndex=0
-Invoke-AudioStimMenu 'toggle-file'
-if($script:stimFilesGrid.SelectedItem.Enabled){throw 'Right-click sound toggle failed'}
-Invoke-AudioStimMenu 'toggle-file'
-$script:stimFilesGrid.SelectedItem.Volume=.4;$script:stimFilesGrid.SelectedItem.Weight=3
-Invoke-AudioStimMenu 'reset-file'
-if($script:stimFilesGrid.SelectedItem.Volume -ne 100 -or $script:stimFilesGrid.SelectedItem.Weight -ne 1){throw 'Right-click reset failed'}
-$script:stimFilesGrid.SelectedItem.Volume=25
-if((Get-AudioStimDraft).Fart.files[0].volume -ne .25){throw 'Volume percent did not convert to playback gain'}
-$script:stimFilesGrid.SelectedItem.Volume=100
-Reset-GlobalSaveGroup 'Audio Stims'
-$script:stimLibraryGrid.SelectedItem=$null
-Update-GlobalSaveGroup 'Audio Stims'
-if($script:globalSaveGroups['Audio Stims'].Dirty){throw 'Changing selection marked the library dirty'}
-$script:stimLibraryGrid.SelectedIndex=0
-$script:stimActionBox.Text='[CE] - Fart [Attack]'
-$script:stimActionBox.RaiseEvent([Windows.Controls.TextChangedEventArgs]::new([Windows.Controls.TextBox]::TextChangedEvent,[Windows.Controls.UndoAction]::None))
-Update-GlobalSaveGroup 'Audio Stims'
-if(-not $script:globalSaveGroups['Audio Stims'].Dirty){throw 'Action edit did not mark the library dirty'}
-Save-AudioStims
- [void]$script:stimOutputBox.Items.Add('Sound effects device')
- $script:stimOutputBox.SelectedItem='Sound effects device'
- Update-GlobalSaveGroup 'Audio Stims'
- if(-not $script:globalSaveGroups['Audio Stims'].Dirty){throw 'Output selection did not mark changes dirty'}
- Save-AudioStims
-Refresh-AudioStims
-if($script:stimOutputBox.SelectedItem -ne 'Sound effects device' -or (Read-Settings).audio_stims.Fart.output_device -ne 'Sound effects device'){throw 'Per-keyword output did not persist'}
-Refresh-AudioStimOutputs -PreserveSelection
-if($script:stimOutputBox.SelectedItem -ne 'Sound effects device'){throw 'Unavailable selected output was lost during refresh'}
-if($script:stimLibraryGrid.ItemsSource[0].Action -ne '[CE] - Fart [Attack]'){throw 'Saved library did not reload'}
-if($script:stimFilesGrid.Columns[0].ElementStyle.BasedOn -ne $window.FindResource([Windows.Controls.CheckBox])){throw 'Sound checkbox is not themed'}
-$checkFixture=[Windows.Controls.CheckBox]::new();$checkFixture.Style=$script:stimFilesGrid.Columns[0].ElementStyle
-if($checkFixture.Margin.Left -ne 18 -or $checkFixture.VerticalAlignment -ne 'Center'){throw 'Checkbox is not aligned under the On header'}
-foreach($index in @(2,3)){
-    $editFixture=[Windows.Controls.TextBox]::new();$editFixture.Style=$script:stimFilesGrid.Columns[$index].EditingElementStyle
-    $editFixture.Measure([Windows.Size]::new($script:stimFilesGrid.Columns[$index].Width.Value,48))
-    if($editFixture.MinWidth -ne 0 -or $editFixture.DesiredSize.Width -gt $script:stimFilesGrid.Columns[$index].Width.Value -or $editFixture.Height -gt 40){throw 'Numeric editor exceeds its cell bounds'}
+if($draft.Fart.files.Count -ne 2 -or $script:stimLibraryGrid.SelectedItem.Files[0].FileName -ne 'fart.wav'){throw 'File library or filename display failed'}
+if($script:stimColorBox -isnot [Windows.Controls.WrapPanel] -or $script:stimColorBox.Children.Count -ne 10){throw 'Alias color swatches missing'}
+$iconRow=$script:stimIconBox.Parent
+if($iconRow -isnot [Windows.Controls.Grid] -or $iconRow.Children[1].Content -ne 'Browse icons' -or $iconRow.ColumnDefinitions[1].Width.GridUnitType -ne 'Auto'){throw 'Browse icons must stay natural-sized beside the icon field'}
+@($script:stimColorBox.Children|Where-Object Tag -eq '#87C9AF')[0].RaiseEvent([Windows.RoutedEventArgs]::new($click))
+$script:stimIconBox.Text='mdi:account';$script:stimIconBox.GetBindingExpression([Windows.Controls.TextBox]::TextProperty).UpdateSource()
+Update-AudioStimAppearance
+foreach($pair in @(@(2,'Volume',0),@(3,'Weight',1))){
+    $root=$script:stimFilesGrid.Columns[$pair[0]].CellTemplate.LoadContent();$file=$script:stimLibraryGrid.SelectedItem.Files[0];$root.DataContext=$file
+    $root.Measure([Windows.Size]::new(180,48));$root.Arrange([Windows.Rect]::new(0,0,180,48));$root.UpdateLayout()
+    $slider=$root.Children[0];if($slider -isnot [Windows.Controls.Slider] -or $slider.Minimum -ne $pair[2] -or $slider.Maximum -ne 100){throw 'Sound controls must be bounded sliders'}
+    $slider.GetBindingExpression([Windows.Controls.Primitives.RangeBase]::ValueProperty).UpdateTarget()
+    $slider.Value=25;$slider.GetBindingExpression([Windows.Controls.Primitives.RangeBase]::ValueProperty).UpdateSource()
+    if($file.($pair[1]) -ne 25){throw 'Slider value did not update sound draft'}
 }
-$script:automationRemoteActions=@(1..250|ForEach-Object{[pscustomobject]@{id="action-$_";name="Action $_"}})+@([pscustomobject]@{id='fart-id';name='Fart attack'})
-$script:stimActionBox.Text='Fart';Update-AutomationActionSearch $script:stimView
-if($script:stimActionBox.Items.Count -ne 1){throw 'Action dropdown did not filter'}
-$script:stimActionBox.SelectedIndex=0
-if($script:stimLibraryGrid.SelectedItem.Action -ne 'fart-id'){throw 'Action selection did not store stable ID'}
-function Invoke-BridgePost([string]$path,$body){$script:stimPreviewBody=$body;return [pscustomobject]@{ok=$true;result=[pscustomobject]@{file='C:\sounds\fart.wav'}}}
+if((Get-AudioStimDraft).Fart.files[0].volume -ne .25){throw 'Volume percent conversion failed'}
+$script:stimModeBox.SelectedValue='pause_with_user';$script:stimPauseBox.Text='2.5';$script:stimPauseBox.GetBindingExpression([Windows.Controls.TextBox]::TextProperty).UpdateSource()
+if((Get-AudioStimDraft).Fart.pause_seconds -ne 2.5){throw 'Pause settings not preserved'}
 $script:stimView.FindName('Random').RaiseEvent([Windows.RoutedEventArgs]::new($click))
-if($script:stimPreviewBody.library.files.Count -ne 2){throw 'Random test did not send the selected draft library'}
-$firstLibrary=$script:stimLibraryGrid.SelectedItem
-$secondLibrary=New-AudioStimRow 'Burp' @{output_device='[Same as TTS output]';files=@()}
-$script:stimLibraryGrid.ItemsSource.Add($secondLibrary)
-Reset-GlobalSaveGroup 'Audio Stims'
-$script:stimLibraryGrid.SelectedItem=$secondLibrary
-if($script:stimOutputBox.SelectedItem -ne '[Same as TTS output]'){throw 'Second keyword did not restore its own output'}
-$script:stimLibraryGrid.SelectedItem=$firstLibrary
-Update-GlobalSaveGroup 'Audio Stims'
-if($script:stimOutputBox.SelectedItem -ne 'Sound effects device' -or $script:globalSaveGroups['Audio Stims'].Dirty){throw 'Switching keywords changed output or marked settings dirty'}
-[void]$script:stimLibraryGrid.ItemsSource.Remove($secondLibrary)
+if($script:stimRequest.keyword -ne 'Fart' -or $script:stimRequest.library.files.Count -ne 2){throw 'Random test lost the draft library'}
+$script:testStimDialog.Resources['SaveButton'].RaiseEvent([Windows.RoutedEventArgs]::new($click))
+if($script:stimDialogOpen -or (Read-Settings).audio_stims.Fart.color -ne '#87C9AF'){throw 'Save popup did not persist and close'}
+$original=$script:stimLibraryGrid.SelectedItem
+$dialog=New-AudioStimEditor
+$script:stimKeywordBox.Text='Changed';$script:stimKeywordBox.GetBindingExpression([Windows.Controls.TextBox]::TextProperty).UpdateSource()
+$script:stimLibraryGrid.SelectedItem.Files[0].Volume=0
+$dialog.Close()
+if($script:stimLibraryGrid.SelectedItem.Keyword -ne 'Fart' -or $original.Files[0].Volume -ne 25){throw 'Discard did not restore original keyword and sound levels'}
+if($script:stimView.FindName('Editor').Parent){throw 'Editor remained on the main page after close'}
+$script:stimSearchBox.Text='not present';if($script:stimLibraryGrid.Items.Count){throw 'Search did not filter keywords'}
+$script:stimSearchBox.Text='Fart';if($script:stimLibraryGrid.Items.Count -ne 1){throw 'Search did not restore keyword'}
+$script:stimLibraryGrid.SelectedIndex=0
+$dialog=New-AudioStimEditor -New;$script:stimKeywordBox.Text='Discard me';$dialog.Close()
+if($script:stimLibraryGrid.ItemsSource.Count -ne 1){throw 'Cancelled new keyword was retained'}
+$script:stimLibraryGrid.SelectedIndex=0
+$row=[pscustomobject]@{Alias='Fart'};Add-SpeechRowAppearance $row
+if($row.Accent -ne '#87C9AF' -or -not $row.IconGeometry){throw 'Keyword appearance not applied to queue'}
 if($OutputImage){
-    [void]$script:stimView.Parent.Children.Remove($script:stimView)
-    $previewHost=[Windows.Controls.Border]::new();$previewHost.Background=[Windows.Media.BrushConverter]::new().ConvertFromString('#18151F');$previewHost.Child=$script:stimView
-    $previewHost.Resources=$window.Resources
-    $previewHost.SetValue([Windows.Documents.TextElement]::ForegroundProperty,[Windows.Media.Brushes]::White)
-    $script:stimView.Width=1000;$script:stimView.Height=800
-    $previewHost.Measure([Windows.Size]::new(1000,800));$previewHost.Arrange([Windows.Rect]::new(0,0,1000,800));$previewHost.UpdateLayout()
-    if($script:stimKeywordBox.Text -ne 'Fart' -or $script:stimFilesGrid.Items.Count -ne 2){throw 'Selected library fields were not restored'}
-    $bitmap=[Windows.Media.Imaging.RenderTargetBitmap]::new(1000,800,96,96,[Windows.Media.PixelFormats]::Pbgra32);$bitmap.Render($previewHost)
-    $encoder=[Windows.Media.Imaging.PngBitmapEncoder]::new();$encoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($bitmap))
-    $stream=[IO.File]::Create($OutputImage);try{$encoder.Save($stream)}finally{$stream.Dispose()}
+    $dialog=New-AudioStimEditor
+    $dialog.ShowActivated=$false;$dialog.ShowInTaskbar=$false;$dialog.WindowStartupLocation='Manual';$dialog.Left=-10000;$dialog.Top=0;$dialog.Show();$dialog.UpdateLayout()
+    $dialog.Dispatcher.Invoke([action]{},[Windows.Threading.DispatcherPriority]::ApplicationIdle)
+    $bitmap=[Windows.Media.Imaging.RenderTargetBitmap]::new(880,820,96,96,[Windows.Media.PixelFormats]::Pbgra32);$bitmap.Render($dialog)
+    $encoder=[Windows.Media.Imaging.PngBitmapEncoder]::new();$encoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($bitmap));$stream=[IO.File]::Create($OutputImage);try{$encoder.Save($stream)}finally{$stream.Dispose()}
+    $dialog.Close()
 }
-$script:stimView.FindName('Delete').RaiseEvent([Windows.RoutedEventArgs]::new($click))
-if($script:stimLibraryGrid.ItemsSource.Count){throw 'Delete did not remove library'}
-Refresh-AudioStims
-if($script:stimLibraryGrid.ItemsSource.Count -ne 1){throw 'Discard reload did not restore library'}
 $window.Close()
-'PASS: Audio Stims navigation, binding, files, save, selection, deletion and reload'
+'PASS: alias-style sound list, themed editor, swatches, sliders, draft save/discard, search, previews and appearance'

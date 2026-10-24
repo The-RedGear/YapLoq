@@ -6,6 +6,7 @@ YAPLOQ QUICK START
 3. Open Voices, create an alias and use Test voice.
 4. Speak from Dashboard. Queue contains waiting and recent speech.
 5. Open Streamer.Bot for connection and action export instructions.
+6. Optional: add sounds under Audio Stims and use [Keyword] tags in messages.
 
 Keep the _internal folder beside YapLoq.exe.
 Settings, logs and audio are stored in the local data folder.

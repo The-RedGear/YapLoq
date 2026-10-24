@@ -87,6 +87,7 @@ function Update-AliasChoiceAppearance {
         $appearance.AccentBackground=[Windows.Media.BrushConverter]::new().ConvertFromString($row.AccentBackground)
         [YapLoqAliasChoiceConverter]::Choices[$row.Name]=$appearance
     }
+    if(Get-Command Update-AudioStimAppearance -ErrorAction SilentlyContinue){Update-AudioStimAppearance}
     $live=@($script:aliasChoiceControls|Where-Object{$_.Reference.IsAlive});$script:aliasChoiceControls=$live
     foreach($entry in $live){Set-AliasChoicePicker $entry.Reference.Target $entry.Path}
 }

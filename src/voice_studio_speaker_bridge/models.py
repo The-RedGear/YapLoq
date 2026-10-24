@@ -136,3 +136,6 @@ class SpeechJob:
     segment_index: int = 0
     message_id: str = ''
     avatar_url: str = ''
+    group_id: str = ''
+    group_size: int = 1
+    replay_of: str = ''

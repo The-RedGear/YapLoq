@@ -246,7 +246,9 @@ class BridgeServers:
                             else:
                                 libraries = validate_libraries({'Preview': {'files': [dict(path=data.get('path', ''), volume=data.get('volume', 1))]}})
                                 file = libraries['Preview']['files'][0]
+                            appearance = data.get('library') or bridge.settings.audio_stims.get(keyword, {})
                             alias = VoiceAlias(keyword, provider='audio-stim', voice_id=file['path'], volume=file['volume'],
+                                               icon_id=data.get('icon_id', appearance.get('icon_id', 'mdi:waveform')), color=data.get('color', appearance.get('color', '#B6A3FF')),
                                                audio_stim=dict(name=keyword, file=file['path'], action='', replay_actions=False))
                             if pause_seconds:
                                 alias.audio_stim['pause_seconds'] = pause_seconds

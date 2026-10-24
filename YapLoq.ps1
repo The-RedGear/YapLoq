@@ -2184,8 +2184,14 @@ function Stop-NowPlayingLoadingSpin {
 }
 
 
+function Get-SpeechIdentityAppearance([string]$name) {
+    $voice=@($PlayVoiceList.Tag | Where-Object {$_.Name -eq $name})[0]
+    if($voice){return $voice}
+    if($script:stimAppearance -and $script:stimAppearance.ContainsKey($name)){return $script:stimAppearance[$name]}
+    return $null
+}
 function Add-SpeechRowAppearance($row) {
-    $voice=@($PlayVoiceList.Tag | Where-Object {$_.Name -eq $row.Alias})[0]
+    $voice=Get-SpeechIdentityAppearance ([string]$row.Alias)
     $accent=Get-VoiceAccent ([string]$voice.Accent)
     $icon=if($voice){$voice}else{Resolve-VoiceIcon 'mdi:music-note' -Color $accent}
     $row | Add-Member -NotePropertyName Accent -NotePropertyValue $accent -Force
@@ -2199,7 +2205,8 @@ function New-QueueSpeechRow($item, [bool]$Paused=$false) {
     try{if($item.timestamp){$time=([datetime]$item.timestamp).ToLocalTime().ToString('MM/dd HH:mm')}}catch{}
     $status=if($Paused -and $item.status -eq 'Playing'){'Paused'}elseif($item.status -in @('Waiting','Ready','Queued')){'Queued'}else{[string]$item.status}
     if($item.source -eq 'History recording' -and $status -eq 'Generating'){$status='Queued'}
-    $row=[pscustomobject]@{Id=$item.id;Timestamp=$item.timestamp;SegmentIndex=$item.segmentIndex;Status=$status;Error=[string]$item.error;Alias=$item.alias;User=$item.user;Platform=$item.platform;UserId=$item.userId;DisplayName=$item.displayName;Text=(Get-DisplayText $item.text);Time=$time;Source=$item.source;AudioPath=[string]$item.audioPath;AudioLabel=$(if($item.audioPath){'Ready'}else{'Pending'})}
+    $row=[pscustomobject]@{Id=$item.id;OriginalId=[string]$item.originalId;GroupId=[string]$item.groupId;Timestamp=$item.timestamp;SegmentIndex=$item.segmentIndex;Status=$status;Error=[string]$item.error;Alias=$item.alias;User=$item.user;Platform=$item.platform;UserId=$item.userId;DisplayName=$item.displayName;Text=(Get-DisplayText $item.text);Time=$time;Source=$item.source;AudioPath=[string]$item.audioPath;AudioLabel=$(if($item.audioPath){'Ready'}else{'Pending'})}
+    $row|Add-Member NoteProperty IsAudioStim ($item.provider -eq 'audio-stim' -or [bool]$item.audioStim.name) -Force
     Add-SpeechRowAppearance $row
     return $row
 }
@@ -2285,7 +2292,7 @@ function Update-NowPlayingBar($state, $lastHistory) {
         $script:nowPlayingMode = if ($paused) { 'paused' } else { 'idle' }
     }
     $script:nowPlayingSubtitleText = [string]$NowPlayingSubtitle.Text
-    $voiceRow=@($PlayVoiceList.Tag|Where-Object{$_.Name -eq $NowPlayingTitle.Text})[0]
+    $voiceRow=Get-SpeechIdentityAppearance ([string]$NowPlayingTitle.Text)
     $voiceAccent=if($voiceRow){Get-VoiceAccent ([string]$voiceRow.Accent)}else{'#B6A3FF'}
     $spinner=$window.FindName('NowPlayingLoadingGlyph')
     if($spinner){$spinner.Stroke=[Windows.Media.BrushConverter]::new().ConvertFromString($voiceAccent)}
@@ -2494,12 +2501,13 @@ function Refresh-ServiceState($Snapshot = $null, [bool]$FromPoll = $false) {
             $cacheExists = $false
             try { if ($savedPath) { $savedExists = Test-Path -LiteralPath $savedPath } } catch {}
             try { if ($audioPath) { $cacheExists = Test-Path -LiteralPath $audioPath } } catch {}
-            $audioLabel = if ($savedExists) { 'Saved' } elseif ($cacheExists) { 'Cached' } else { 'Unavailable' }
+            $audioLabel = if ($item.audioStim.pause_seconds) { 'Pause' } elseif ($item.audioStim -and $cacheExists) { 'Source file' } elseif ($savedExists) { 'Saved' } elseif ($cacheExists) { 'Cached' } else { 'Unavailable' }
             $row = [pscustomobject]@{
-                Id=$item.id; Timestamp=$item.timestamp; SegmentIndex=$item.segmentIndex; Time=$time; Status=$item.status; Error=[string]$item.error; Alias=$item.alias; Source=$item.source
+                Id=$item.id; GroupId=[string]$item.groupId; Timestamp=$item.timestamp; SegmentIndex=$item.segmentIndex; Time=$time; Status=$item.status; Error=[string]$item.error; Alias=$item.alias; Source=$item.source
                 User=$item.user; Platform=$item.platform; UserId=$item.userId; DisplayName=$item.displayName; Text=(Get-DisplayText $item.text); AudioPath=$audioPath; SavedPath=$savedPath
-                AudioLabel=$audioLabel; HasAudio=($savedExists -or $cacheExists); DurationMs=$item.duration
+                AudioLabel=$audioLabel; HasAudio=($savedExists -or $cacheExists -or [bool]$item.audioStim.pause_seconds); DurationMs=$item.duration
             }
+            $row|Add-Member NoteProperty IsAudioStim ($item.provider -eq 'audio-stim' -or [bool]$item.audioStim.name) -Force
             Add-SpeechRowAppearance $row
             [void]$historyRows.Add($row)
             if (-not $lastHistory -and $row.HasAudio) { $lastHistory = $row }
@@ -2551,6 +2559,11 @@ function Get-MediaRecordingTarget {
 }
 
 function Replay-SelectedHistory {
+    $group=$script:unifiedQueueGrid.SelectedItem
+    if($group.IsGroup){
+        try{Invoke-BridgePost '/api/history/replay' @{groupId=[string]$group.GroupId}|Out-Null;$BottomStatus.Text='Message queued from the beginning';Refresh-ServiceState}catch{$BottomStatus.Text=$_.Exception.Message}
+        return
+    }
     $row=Get-SelectedHistoryRecording
     if(-not $row -or -not $row.HasAudio){$BottomStatus.Text='Select a history message with available audio';return}
     try{Invoke-BridgePost '/api/history/replay' @{speechId=[string]$row.Id}|Out-Null;$BottomStatus.Text='Recording queued';Refresh-ServiceState}

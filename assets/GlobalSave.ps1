@@ -9,6 +9,7 @@ function script:Get-LiveSettingsDraft {
     try{
         foreach($group in $script:globalSaveGroups.Values){
             if($group.Key -in @('Actions','Voices')){continue}
+            if($group.Key -eq 'Audio Stims' -and $script:stimDialogOpen){continue}
             if(-not $group.Dirty){$script:liveValidGroups.Remove($group.Key);continue}
             $fingerprint=Get-GlobalSaveFingerprint $group
             if($script:liveValidGroups.ContainsKey($group.Key) -and $script:liveValidGroups[$group.Key].Fingerprint -eq $fingerprint){continue}
@@ -332,6 +333,7 @@ function script:Update-GlobalSaveButton {
 }
 
 function script:Update-GlobalSaveGroup([string]$key){
+    if($key -eq 'Audio Stims' -and $script:stimDialogOpen){return}
     if(-not $script:globalSaveInstalled -or $script:globalSaving -or $script:loadingSettings){return}
     $group=$script:globalSaveGroups[$key];if(-not $group){return}
     $group.Dirty=(Get-GlobalSaveFingerprint $group) -ne $group.Baseline
@@ -404,6 +406,7 @@ function script:Show-SaveDetails {
 function script:Show-SaveFeedback([string]$message,[bool]$failed=$false){
     if(-not $script:globalSaveFeedback){return}
     $script:globalSaveFeedbackTimer.Stop()
+    if($script:globalSaveFeedbackCollapseTimer){$script:globalSaveFeedbackCollapseTimer.Stop()}
     $script:lastSaveMessage=$message
     $script:globalSaveFeedback.BeginAnimation([Windows.UIElement]::OpacityProperty,$null);$script:globalSaveFeedback.Opacity=1
     $script:globalSaveFeedback.Text=if($failed){'Not saved — click for details'}else{$message};$script:globalSaveFeedback.ToolTip='View or copy the full save result'
@@ -483,7 +486,7 @@ function script:Install-GlobalSave {
         if($spec[2]){$button=$window.FindName($spec[2]);if($button){$button.Visibility='Collapsed'}}
     }
     Add-GlobalSaveGroup 'Default voice' @($script:assignmentDefaultPicker) {Save-AssignmentDefault}
-    if($script:stimLibraryGrid){Add-GlobalSaveGroup 'Audio Stims' @($script:stimLibraryGrid,$script:stimFilesGrid,$script:stimKeywordBox,$script:stimActionBox,$script:stimCensorBox,$script:stimEnabledCheck,$script:stimReplayCheck,$script:stimAllowWithoutUserCheck,$script:stimModeBox,$script:stimPauseBox,$script:stimOutputBox) {Save-AudioStims}}
+    if($script:stimLibraryGrid){Add-GlobalSaveGroup 'Audio Stims' @($script:stimLibraryGrid,$script:stimFilesGrid,$script:stimKeywordBox,$script:stimActionBox,$script:stimCensorBox,$script:stimEnabledCheck,$script:stimReplayCheck,$script:stimAllowWithoutUserCheck,$script:stimModeBox,$script:stimPauseBox,$script:stimOutputBox,$script:stimIconBox,$script:stimColorBox) {Save-AudioStims}}
     Add-GlobalSaveGroup 'Speech input' @($script:viewerCommandsEnabled,$script:chatVoiceTagsAllEnabled,$script:splitSpeechSentences) {Save-ViewerCommands}
     $actionInputs=@('AutomationName','AutomationEnabled','AutomationOnError','AutomationConditions','AutomationSteps'|ForEach-Object{Get-AutomationControl $_})
     Add-GlobalSaveGroup 'Actions' $actionInputs {
@@ -523,12 +526,15 @@ function script:Install-GlobalSave {
     [Windows.Automation.AutomationProperties]::SetName($notice,'Save result')
     $parent.Children.Insert($parent.Children.IndexOf($button),$notice)
     $script:globalSaveFeedbackTimer=[Windows.Threading.DispatcherTimer]::new();$script:globalSaveFeedbackTimer.Interval=[TimeSpan]::FromSeconds(6)
+    $script:globalSaveFeedbackCollapseTimer=[Windows.Threading.DispatcherTimer]::new();$script:globalSaveFeedbackCollapseTimer.Interval=[TimeSpan]::FromMilliseconds(300)
+    $script:globalSaveFeedbackCollapseTimer.Add_Tick({param($sender,$e)$sender.Stop();if(-not $script:globalSaveFeedbackTimer.IsEnabled){$script:globalSaveFeedback.Visibility='Collapsed'}})
     $script:globalSaveFeedbackTimer.Add_Tick({param($sender,$e)
         $sender.Stop();$fade=[Windows.Media.Animation.DoubleAnimation]::new();$fade.From=1;$fade.To=0;$fade.Duration=[TimeSpan]::FromMilliseconds(250)
         $fade.Add_Completed({if(-not $script:globalSaveFeedbackTimer.IsEnabled){$script:globalSaveFeedback.Visibility='Collapsed'}})
         $script:globalSaveFeedback.BeginAnimation([Windows.UIElement]::OpacityProperty,$fade)
+        $script:globalSaveFeedbackCollapseTimer.Start()
     })
-    $window.Add_Closed({if($script:globalSaveFeedbackTimer){$script:globalSaveFeedbackTimer.Stop()}})
+    $window.Add_Closed({if($script:globalSaveFeedbackTimer){$script:globalSaveFeedbackTimer.Stop()};if($script:globalSaveFeedbackCollapseTimer){$script:globalSaveFeedbackCollapseTimer.Stop()}})
     $button.Add_Click({Save-AllPendingChanges})
     $window.Add_PreviewKeyDown({param($sender,$e)if($e.Key -eq 'S' -and [Windows.Input.Keyboard]::Modifiers -eq [Windows.Input.ModifierKeys]::Control){Save-AllPendingChanges;$e.Handled=$true}})
     $window.AddHandler([Windows.Controls.Button]::ClickEvent,[Windows.RoutedEventHandler]{param($sender,$e)

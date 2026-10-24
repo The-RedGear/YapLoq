@@ -1,20 +1,16 @@
 # Changelog
 
-## Unreleased
+## 0.6.4 — 2026-10-24
 
-- Added pause when viewer information is available. Audio Stim replacement names are no longer incorrectly masked as censored words in the queue.
-- Each Audio Stim keyword has its own output device, including a same-as-TTS option. Existing routing is preserved for older libraries.
-- Keywords can pause instead of playing library audio, either always or only when viewer identity is missing, with adjustable duration.
-- Stim previews display their keyword. Sound volume uses 0–100%, with random weights from 1–100 and unchecked entries excluded.
-- Queue-finished hooks wait for trailing sound segments. Attached stim actions require viewer identity unless explicitly allowed per stim.
-- Sound-only inputs no longer dispatch speech queue/avatar hooks. Stim previews use the selected Audio Stims output, including unsaved output selections.
-- Audio Stim actions use a searchable Streamer.bot dropdown. Test random previews a weighted pick from the current library without running actions.
-- Audio Stims have an independent output-device selector, with live switching and a same-as-TTS fallback.
-- Audio Stims libraries play local sounds in line with speech, with weighted randomness, per-file volume, previews and optional censor replacements.
-- Optional Streamer.bot actions run when a stim starts playing, using the original viewer identity. Previews never run actions; replay actions are off by default.
-- Playlist selection uses readable voice labels, rounded app-style checkboxes, alias-colored checks and a resizable list with more row spacing.
-- Custom icons use the correct stable or preview renderer and safely handle missing helpers.
-- Unknown bracket tags remain speech instead of rejecting the entire message.
+- Added Audio Stims: play local sound files with `[Keyword]` tags, using one sound or a weighted library. Speech continues in order without changing voices.
+- Sound editors include searchable libraries, custom icons and colors, volume and weight sliders, previews, modern folder selection and per-keyword audio outputs.
+- Keywords can pause instead of playing a sound, with separate behavior when viewer information is present or missing. Censored words can be replaced with a sound.
+- Optional Streamer.bot actions run with sounds and receive the original viewer information. Previews never run actions; replay actions and actions without viewer information require opt-in.
+- Split messages appear as expandable queue groups with full-message replay. Groups use the first voice alias's icon and color; sound-only groups use a neutral folder.
+- Speech generates continuously in the background with two provider requests at most. Playback remains ordered; pausing stops new generation requests.
+- Audio Stims replay from their original files instead of creating cached copies. Queue-finished events wait for trailing sounds, and sound-only inputs do not start speech/avatar hooks.
+- Fixed custom icon loading, playlist-picker contrast and checkbox styling, Audio Stim censor labels, and editor draft handling. The profanity sound picker uses each keyword's icon and color.
+- Unknown bracket tags remain speech instead of rejecting the message.
 
 ## 0.6.3
 

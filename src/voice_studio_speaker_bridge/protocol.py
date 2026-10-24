@@ -567,6 +567,9 @@ class SpeakerBotProtocol:
         if normalized == "savehistoryaudio":
             return {"path": self.engine.save_history_audio(str(data.get("speechId", "")))}
         if normalized == "replayhistory":
+            if data.get('groupId'):
+                jobs = self.engine.replay_group(str(data['groupId']))
+                return {'speechIds': [job.speech_id for job in jobs]}
             job = self.engine.replay_history(str(data.get("speechId", "")))
             return {"speechId": job.speech_id}
         if normalized == "removespeech":

@@ -1,4 +1,4 @@
-from threading import Event
+from threading import Event, Lock
 from time import monotonic, sleep
 from unittest.mock import Mock
 
@@ -49,7 +49,8 @@ def test_prepares_during_playback_without_reordering_or_regenerating(engine):
         assert playing.wait(2)
         assert jobs[1].generation_done.wait(2)
         assert jobs[1].status == 'Ready'
-        assert synthesized == ['first', 'second']
+        assert jobs[2].generation_done.wait(2)
+        assert sorted(synthesized) == ['first', 'second', 'third']
         with engine.pending.mutex:
             assert list(engine.pending.queue) == jobs[1:]
         # A manual reorder is honored, even though the other entry is ready.
@@ -136,3 +137,42 @@ def test_pause_does_not_start_preparing_paid_requests(engine):
     sleep(0.15)
     engine._synthesize.assert_not_called()
     assert not job.generation_started
+
+
+def test_generates_all_waiting_speech_while_first_is_still_generating(engine):
+    first_started, release_first = Event(), Event()
+    lock = Lock()
+    active = 0
+    peak = 0
+    generated, played = [], []
+    def synth(job):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        try:
+            if job.text == 'first':
+                first_started.set()
+                release_first.wait(4)
+            generated.append(job.text)
+            return job.text.encode()
+        finally:
+            with lock:
+                active -= 1
+    engine._synthesize = synth
+    engine.audio.play.side_effect = lambda pcm, **kwargs: played.append(pcm.decode()) or True
+    texts = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth']
+    jobs = [engine.enqueue(text, engine.settings.aliases['EventVoice']) for text in texts]
+    engine.start()
+    try:
+        assert first_started.wait(2)
+        assert jobs[-1].generation_done.wait(2)
+        assert all(job.generation_done.is_set() for job in jobs[1:])
+        assert not jobs[0].generation_done.is_set() and played == []
+        assert peak == 2  # Full look-ahead without unbounded provider concurrency.
+        release_first.set()
+        wait_for(lambda: len(engine.history) == len(texts))
+        assert played == texts
+        assert sorted(generated) == sorted(texts)
+    finally:
+        release_first.set()

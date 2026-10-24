@@ -10,6 +10,7 @@ import io
 import math
 import struct
 import wave
+import uuid
 from xml.etree import ElementTree
 from datetime import datetime
 from pathlib import Path
@@ -52,6 +53,7 @@ class SpeechEngine:
         self._retention_limit = self.settings.history_limit
         self.thread = Thread(target=self._run, name="Speech queue", daemon=True)
         self.prepare_thread = Thread(target=self._prepare_upcoming, name="Upcoming speech", daemon=True)
+        self.prepare_threads = [self.prepare_thread, Thread(target=self._prepare_upcoming, name="Upcoming speech 2", daemon=True)]
         self.queue_path = settings.path.parent / "queue.json"
         if settings.persist_queue:
             self._restore_queue()
@@ -70,8 +72,8 @@ class SpeechEngine:
                 values = [{"text": job.text, "alias": job.alias.to_dict(), "name": job.alias.name,
                            "source": job.source, "user": job.user, "priority": job.priority,
                            "platform": job.platform, "userId": job.user_id, "displayName": job.display_name,
-                           "timestamp": job.timestamp, "segmentIndex": job.segment_index, "messageId": job.message_id, "avatarUrl": job.avatar_url, "replay_recording": job.replay_recording,
-                           "audio_path": job.audio_path if job.replay_recording else ""}
+                           "timestamp": job.timestamp, "segmentIndex": job.segment_index, "groupId": job.group_id, "groupSize": job.group_size, "messageId": job.message_id, "avatarUrl": job.avatar_url, "replay_recording": job.replay_recording,
+                           "audio_path": job.audio_path if job.replay_recording else "", "originalId": job.replay_of}
                           for job in jobs if job and not job.cancelled and job.status not in {"Finished", "Error", "Cancelled", "Skipped", "Removed"}]
             temporary = self.queue_path.with_suffix(".tmp")
             temporary.parent.mkdir(parents=True, exist_ok=True)
@@ -90,9 +92,12 @@ class SpeechEngine:
                     priority=int(value.get("priority", 0)), timestamp=value["timestamp"],
                     platform=value.get('platform', ''), user_id=value.get('userId', ''), display_name=value.get('displayName', ''), segment_index=int(value.get('segmentIndex', 0)), message_id=value.get('messageId', ''), avatar_url=value.get('avatarUrl', ''))
                 age = max(0, (datetime.now().astimezone() - datetime.fromisoformat(job.timestamp.replace("Z", "+00:00"))).total_seconds())
+                job.group_id = str(value.get('groupId', ''))
+                job.group_size = int(value.get('groupSize', 1))
+                job.replay_of = str(value.get('originalId', ''))
                 job.enqueued_at = monotonic() - age
                 if value.get("replay_recording"):
-                    if not Path(value.get("audio_path", "")).is_file():
+                    if not job.alias.audio_stim.get('pause_seconds') and not Path(value.get("audio_path", "")).is_file():
                         continue
                     job.audio_path = value["audio_path"]
                     job.replay_recording = True
@@ -159,7 +164,8 @@ class SpeechEngine:
                     self.events.emit("texttospeech", "received", self._event_data(job))
                     job.registered = True
             self.thread.start()
-            self.prepare_thread.start()
+            for worker in self.prepare_threads:
+                worker.start()
 
     def shutdown(self) -> None:
         if self._stop.is_set():
@@ -181,8 +187,9 @@ class SpeechEngine:
         self.pending.put(None)
         if self.thread.is_alive():
             self.thread.join(timeout=5)
-        if self.prepare_thread.is_alive():
-            self.prepare_thread.join(timeout=5)
+        for worker in self.prepare_threads:
+            if worker.is_alive():
+                worker.join(timeout=5)
 
     def enqueue(self, text: str, alias: VoiceAlias, source: str = "Manual", user: str = "", priority: int = 0,
                 *, platform: str = "", user_id: str = "", display_name: str = "", message_id='', avatar_url='') -> SpeechJob:
@@ -214,7 +221,10 @@ class SpeechEngine:
                 self._last_user_request[user.casefold().strip()] = now
             with self._lock:
                 queue_was_active = self._queue_has_work()
+                group_id = str(uuid.uuid4())
                 for index, job in enumerate(jobs):
+                    job.group_id = group_id
+                    job.group_size = len(jobs)
                     job.segment_index = index
                     self._recent_requests[(user.casefold(), job.alias.name, job.text.casefold())] = now
                     self._publish_job(job, queue_added=False)
@@ -437,7 +447,7 @@ class SpeechEngine:
             return []
 
     def _record_history(self, job: SpeechJob) -> None:
-        if not job.audio_path or not Path(job.audio_path).is_file():
+        if not job.alias.audio_stim.get('pause_seconds') and (not job.audio_path or not Path(job.audio_path).is_file()):
             return
         entry = self._job_dict(job)
         with self._history_lock:
@@ -459,10 +469,10 @@ class SpeechEngine:
                 "error": job.error, "audioPath": job.audio_path, "priority": job.priority,
                 "provider": job.alias.provider, "platform": job.platform,
                 "userId": job.user_id, "displayName": job.display_name, "segmentIndex": job.segment_index,
-                "messageId": job.message_id, "userProfileImageUrl": job.avatar_url,
-                "audioStim": dict(job.alias.audio_stim), "volume": job.alias.volume}
+                "messageId": job.message_id, "groupId": job.group_id, "groupSize": job.group_size, "originalId": job.replay_of, "userProfileImageUrl": job.avatar_url,
+                "audioStim": dict(job.alias.audio_stim), "volume": job.alias.volume, "icon_id": job.alias.icon_id, "color": job.alias.color}
 
-    def replay_history(self, speech_id: str) -> SpeechJob:
+    def replay_history(self, speech_id: str, *, dry_run=False) -> SpeechJob:
         self.settings.reload_if_changed()
         with self._history_lock:
             entry = next((item for item in self.history if item.get("id") == speech_id), None)
@@ -473,17 +483,54 @@ class SpeechEngine:
             alias = VoiceAlias(str(entry.get("alias", "Voice")), provider=str(entry.get("provider", "voicestudio")),
                                volume=float(entry.get('volume', 1)), audio_stim=dict(entry.get('audioStim') or {}))
         if alias.audio_stim:
+            alias.voice_id = str(entry.get('voice') or alias.audio_stim.get('file', ''))
             library = self.settings.audio_stims.get(alias.audio_stim.get('name'), {})
+            alias.icon_id = library.get('icon_id', entry.get('icon_id', 'mdi:waveform'))
+            alias.color = library.get('color', entry.get('color', '#B6A3FF'))
             device = library.get('output_device', '')
             alias.output_device = (self.settings.output_device or '[Default]') if device == '[Same as TTS output]' else device
             alias.audio_stim = dict(alias.audio_stim, action=library.get('action', ''), replay_actions=library.get('replay_actions', False), allow_without_user=library.get('allow_without_user', False))
         with self._admission_lock:
             path = self._history_audio_path(entry)
-            if path is None:
+            if path is None and not alias.audio_stim.get('pause_seconds'):
                 raise ValueError("This recording has expired from the audio cache. Speak the message again in Playground.")
-            job = self._enqueue(str(entry.get("text", "")), alias, "History recording", str(entry.get('user', '')), 0, recording=str(path),
-                                viewer=dict(platform=entry.get('platform', ''), user_id=entry.get('userId', ''), display_name=entry.get('displayName', ''), message_id=entry.get('messageId', ''), avatar_url=entry.get('userProfileImageUrl', '')))
+            job = self._enqueue(str(entry.get("text", "")), alias, "History recording", str(entry.get('user', '')), 0, recording=str(path or 'pause'), dry_run=dry_run,
+                                viewer=dict(platform=entry.get('platform', ''), user_id=entry.get('userId', ''), display_name=entry.get('displayName', ''), message_id=entry.get('messageId', ''), avatar_url=entry.get('userProfileImageUrl', ''), replay_of=speech_id))
         return job
+
+    def replay_group(self, group_id: str) -> list[SpeechJob]:
+        """Validate every recording before admitting one contiguous replay batch."""
+        with self._admission_lock:
+            with self._history_lock:
+                entries = sorted((dict(e) for e in self.history if group_id and e.get('groupId') == group_id), key=lambda e: e.get('segmentIndex', 0))
+            with self._lock, self.pending.mutex:
+                active = list(self.pending.queue) + ([self._current] if self._current else [])
+            if any(j and j.group_id == group_id and j.status not in {'Finished', 'Error', 'Cancelled', 'Skipped'} for j in active):
+                raise ValueError('Wait until this message finishes before replaying it')
+            if not entries:
+                raise ValueError('Message group was not found')
+            if len(entries) != max(e.get('groupSize', len(entries)) for e in entries):
+                raise ValueError('Part of this message has expired from history; the complete message cannot be replayed')
+            if self.pending.qsize() + len(entries) > self.settings.max_queue:
+                raise ValueError('Speech queue cannot fit the complete message')
+            jobs = [self.replay_history(e['id'], dry_run=True) for e in entries]
+            user = jobs[0].user
+            if user and self.settings.per_user_queue_limit:
+                count = sum(j is not None and not j.cancelled and j.user.casefold() == user.casefold() for j in active)
+                if count + len(jobs) > self.settings.per_user_queue_limit:
+                    raise ValueError(f'{user} has reached their queue limit')
+            with self._lock:
+                was_active = self._queue_has_work()
+                for index, job in enumerate(jobs):
+                    job.group_id = group_id
+                    job.group_size = len(jobs)
+                    job.segment_index = index
+                    self._publish_job(job, queue_added=False)
+                data = dict(self._event_data(next((j for j in jobs if not j.alias.audio_stim), jobs[0])), speechIds=[j.speech_id for j in jobs], segmentCount=len(jobs), text=' '.join(j.text for j in jobs))
+                self.events.emit('texttospeech', 'queueadded', data)
+                if was_active:
+                    self.events.emit('texttospeech', 'queueextended', data)
+            return jobs
 
     def test_output(self, device: str, preview: bool = False) -> SpeechJob:
         output = io.BytesIO()
@@ -573,6 +620,10 @@ class SpeechEngine:
                 "durationSeconds": round(duration_sec, 2), "seekRevision": self.audio.seek_revision}
 
     def _history_audio_path(self, entry: dict) -> Path | None:
+        stim = entry.get('audioStim') or {}
+        if stim.get('file'):
+            path = Path(stim['file'])
+            return path if path.is_file() else None
         for key in ("savedPath", "audioPath"):
             value = str(entry.get(key) or "")
             if value:
@@ -586,7 +637,16 @@ class SpeechEngine:
 
     def history_items(self) -> list[dict]:
         with self._history_lock:
-            return [dict(item) for item in self.history if self._history_audio_path(item) is not None][:self.settings.history_limit]
+            items = []
+            for item in self.history:
+                stim = item.get('audioStim') or {}
+                path = self._history_audio_path(item)
+                if path is not None or stim.get('pause_seconds'):
+                    value = dict(item)
+                    if stim:
+                        value['audioPath'] = str(path) if path else ''
+                    items.append(value)
+            return items[:self.settings.history_limit]
 
     def clear_history(self) -> None:
         with self._history_lock:
@@ -825,11 +885,11 @@ class SpeechEngine:
             return wav
         return None
 
-    def _generated_audio(self, job: SpeechJob) -> bytes | None:
+    def _generated_audio(self, job: SpeechJob, *, claimed=False) -> bytes | None:
         # The queue worker and look-ahead worker share one generation result.
         # A manual move may make a preparing entry current; never synthesize twice.
         with self._lock:
-            owner = not job.generation_started
+            owner = claimed or not job.generation_started
             if owner:
                 job.generation_started = True
         if owner:
@@ -845,9 +905,13 @@ class SpeechEngine:
                     with self._admission_lock:
                         if job.cancelled or self._stop.is_set():
                             return None
-                        path = self._cache_file_path(job)
-                        path.write_bytes(wav)
-                        job.audio_path = str(path)
+                        if job.alias.audio_stim:
+                            job.audio_bytes = wav
+                            job.audio_path = str(job.alias.audio_stim.get('file', ''))
+                        else:
+                            path = self._cache_file_path(job)
+                            path.write_bytes(wav)
+                            job.audio_path = str(path)
                 except OSError:
                     logging.exception("Could not cache generated voice audio")
                     job.audio_bytes = wav
@@ -870,23 +934,23 @@ class SpeechEngine:
         return job.audio_bytes if job.audio_bytes is not None else Path(job.audio_path).read_bytes()
 
     def _prepare_upcoming(self) -> None:
-        # Only prepare while audio is actually playing, never drain the queue
-        # into paid provider calls while paused. Keep at most two prepared jobs
-        # after explicit reorders; ordinary playback looks ahead by one entry.
+        # Keep provider requests moving even while the current clip is generating
+        # or waiting on an action. Ready clips remain on disk, in playback order.
+        # The shared generation semaphore limits actual provider calls to two.
         while not self._stop.wait(0.025):
-            with self._lock, self.pending.mutex:
-                if self._paused.is_set() or not self._current or self._current.status != "Playing":
+            with self._admission_lock, self._lock, self.pending.mutex:
+                if self._paused.is_set():
                     continue
-                waiting = [job for job in self.pending.queue if job and not job.cancelled]
-                if not waiting or sum(job.generation_started for job in waiting) >= 2:
+                job = next((j for j in self.pending.queue if j and not j.cancelled
+                            and not j.generation_started and not j.replay_recording
+                            and j.audio_bytes is None and not j.alias.audio_stim
+                            and (not self.settings.max_message_age or monotonic() - j.enqueued_at <= self.settings.max_message_age)), None)
+                if job is None:
                     continue
-                job = waiting[0]
-                if job.generation_started or job.replay_recording or job.audio_bytes is not None:
-                    continue
-                if self.settings.max_message_age and monotonic() - job.enqueued_at > self.settings.max_message_age:
-                    continue
+                # Claim under the queue lock so the other worker skips this job.
+                job.generation_started = True
             try:
-                self._generated_audio(job)
+                self._generated_audio(job, claimed=True)
             except Exception:
                 # Keep the failure on this entry. The playback worker publishes
                 # its terminal event in order, then continues with the next job.
@@ -920,6 +984,9 @@ class SpeechEngine:
                     continue
                 if job.audio_bytes is not None:
                     wav = job.audio_bytes
+                elif job.replay_recording and job.alias.audio_stim:
+                    wav = self._generate(job)
+                    job.audio_path = str(job.alias.audio_stim.get('file', ''))
                 elif job.replay_recording and job.audio_path:
                     wav = Path(job.audio_path).read_bytes()
                 else:
@@ -928,7 +995,7 @@ class SpeechEngine:
                     job.status = "Cancelled"
                     continue
                 try:
-                    if not job.replay_recording and not job.audio_path:
+                    if not job.replay_recording and not job.audio_path and not job.alias.audio_stim:
                         cache_path = self._cache_file_path(job)
                         cache_path.write_bytes(wav)
                         job.audio_path = str(cache_path)
@@ -978,8 +1045,7 @@ class SpeechEngine:
                 last_played = self._job_dict(job)
                 if job.replay_recording:
                     with self._history_lock:
-                        original = next((item for item in self.history if job.audio_path and
-                                         job.audio_path in (item.get("audioPath"), item.get("savedPath"))), None)
+                        original = next((item for item in self.history if item.get('id') == job.replay_of), None)
                     if original:
                         last_played["id"] = original["id"]
                 with self._lock:

@@ -1,10 +1,13 @@
+. (Join-Path $resourceRoot 'assets/AudioStimsDesign.ps1')
+. (Join-Path $resourceRoot 'assets/AudioStimDialogs.ps1')
 function script:New-AudioStimRow([string]$name,$value){
     $files=[Collections.ObjectModel.ObservableCollection[object]]::new()
     foreach($file in @($value.files)){
         if($file){$files.Add([pscustomobject]@{Path=[string]$file.path;FileName=[IO.Path]::GetFileName([string]$file.path);Volume=([Math]::Min(100,[double]$file.volume*100));Weight=([Math]::Max(1,[Math]::Min(100,[double]$file.weight)));Enabled=($file.enabled -ne $false -and [double]$file.weight -gt 0)})}
     }
+    $icon=if($value.icon_id){[string]$value.icon_id}else{'mdi:waveform'};$color=Get-VoiceAccent ([string]$value.color)
     $device=if($value.output_device){[string]$value.output_device}elseif((Read-Settings).audio_stim_output_device){[string](Read-Settings).audio_stim_output_device}else{'[Same as TTS output]'}
-    return [pscustomobject]@{Keyword=$name;OutputDevice=$device;Enabled=($value.enabled -ne $false);Files=$files;Action=[string]$value.action;ReplayActions=($value.replay_actions -eq $true);AllowWithoutUser=($value.allow_without_user -eq $true);PlaybackMode=$(if($value.playback_mode){[string]$value.playback_mode}else{'sound'});PauseSeconds=$(if($value.pause_seconds){[double]$value.pause_seconds}else{1.0});CensorWords=(@($value.censor_words) -join [Environment]::NewLine)}
+    return [pscustomobject]@{Keyword=$name;IconId=$icon;Color=$color;Accent=$color;AccentBackground=('#33'+$color.Substring(1));OutputDevice=$device;Enabled=($value.enabled -ne $false);Files=$files;Action=[string]$value.action;ReplayActions=($value.replay_actions -eq $true);AllowWithoutUser=($value.allow_without_user -eq $true);PlaybackMode=$(if($value.playback_mode){[string]$value.playback_mode}else{'sound'});PauseSeconds=$(if($value.pause_seconds){[double]$value.pause_seconds}else{1.0});CensorWords=(@($value.censor_words) -join [Environment]::NewLine)}
 }
 function script:Get-AudioStimDraft {
     [void]$script:stimLibraryGrid.CommitEdit();[void]$script:stimFilesGrid.CommitEdit()
@@ -20,6 +23,7 @@ function script:Get-AudioStimDraft {
             @{path=$file.Path;volume=($volume/100);weight=$weight;enabled=[bool]$file.Enabled}
         })
         $libraries[$name]=@{enabled=[bool]$row.Enabled;files=$files;output_device=[string]$row.OutputDevice;action=$row.Action.Trim();replay_actions=[bool]$row.ReplayActions;allow_without_user=[bool]$row.AllowWithoutUser;playback_mode=[string]$row.PlaybackMode;pause_seconds=[double]$row.PauseSeconds;censor_words=@($row.CensorWords -split '\r?\n' | ForEach-Object {$_.Trim()} | Where-Object {$_})}
+        $libraries[$name].icon_id=[string]$row.IconId;$libraries[$name].color=[string]$row.Color
     }
     return $libraries
 }
@@ -63,6 +67,7 @@ function script:Refresh-AudioStims {
     if($settings.audio_stims){foreach($prop in $settings.audio_stims.PSObject.Properties){$rows.Add((New-AudioStimRow $prop.Name $prop.Value))}}
     $script:stimLibraryGrid.ItemsSource=$rows
     if($rows.Count){$script:stimLibraryGrid.SelectedIndex=0}else{$script:stimView.FindName('Editor').DataContext=$null;$script:stimView.FindName('Editor').IsEnabled=$false}
+    Update-AudioStimAppearance
 }
 function script:Install-AudioStims {
     $panel=New-YapLoqPage 'stims'
@@ -136,16 +141,17 @@ function script:Install-AudioStims {
     $checkStyle.Setters.Add([Windows.Setter]::new([Windows.FrameworkElement]::HorizontalAlignmentProperty,[Windows.HorizontalAlignment]::Left))
     $checkStyle.Setters.Add([Windows.Setter]::new([Windows.FrameworkElement]::VerticalAlignmentProperty,[Windows.VerticalAlignment]::Center))
     $script:stimFilesGrid.Columns[0].ElementStyle=$checkStyle;$script:stimFilesGrid.Columns[0].EditingElementStyle=$checkStyle
-    $script:stimLibraryGrid.Add_SelectionChanged({$script:stimView.FindName('Editor').DataContext=$script:stimLibraryGrid.SelectedItem;$script:stimView.FindName('Editor').IsEnabled=($null -ne $script:stimLibraryGrid.SelectedItem);Refresh-AudioStimOutputs;Show-AudioStimAction})
-    $view.FindName('Add').Add_Click({$row=New-AudioStimRow '' @{};$script:stimLibraryGrid.ItemsSource.Add($row);$script:stimLibraryGrid.SelectedItem=$row;[void]$script:stimKeywordBox.Focus();$script:yaploqPages.stims.ScrollToTop();Update-GlobalSaveGroup 'Audio Stims'})
+    $script:stimLibraryGrid.Add_SelectionChanged({$script:stimIdentityLoading=$true;try{$script:stimView.FindName('Editor').DataContext=$script:stimLibraryGrid.SelectedItem;$script:stimView.FindName('Editor').IsEnabled=($null -ne $script:stimLibraryGrid.SelectedItem);Refresh-AudioStimOutputs;Show-AudioStimAction}finally{$script:stimIdentityLoading=$false}})
+    $view.FindName('Add').Add_Click({Show-AudioStimEditor -New})
     $view.FindName('Delete').Add_Click({$row=$script:stimLibraryGrid.SelectedItem;if($row){[void]$script:stimLibraryGrid.ItemsSource.Remove($row);Update-GlobalSaveGroup 'Audio Stims'}})
-    $view.FindName('Files').Add_Click({$picker=[Microsoft.Win32.OpenFileDialog]::new();$picker.Multiselect=$true;$picker.Filter='Audio files|*.wav;*.mp3;*.ogg;*.flac';if($picker.ShowDialog($window)){Add-AudioStimFiles $picker.FileNames}})
+    $view.FindName('Files').Add_Click({$picker=[Microsoft.Win32.OpenFileDialog]::new();$picker.Multiselect=$true;$picker.Filter='Audio files|*.wav;*.mp3;*.ogg;*.flac';$owner=if($script:stimEditorWindow){$script:stimEditorWindow}else{$window};if($picker.ShowDialog($owner)){Add-AudioStimFiles $picker.FileNames}})
     $view.FindName('Folder').Add_Click({try{$folder=Select-YapLoqFolder 'Add a sound folder';if($folder){Add-AudioStimFiles @(Get-ChildItem -LiteralPath $folder -File | Select-Object -ExpandProperty FullName)}}catch{$script:stimView.FindName('Status').Text=$_.Exception.Message}})
     $view.FindName('RemoveFile').Add_Click({$row=$script:stimLibraryGrid.SelectedItem;$file=$script:stimFilesGrid.SelectedItem;if($row -and $file){[void]$row.Files.Remove($file);Update-GlobalSaveGroup 'Audio Stims'}})
     $view.FindName('Preview').Add_Click({try{$file=$script:stimFilesGrid.SelectedItem;$row=$script:stimLibraryGrid.SelectedItem;if($file -and $row){$draft=Get-AudioStimDraft;[void](Invoke-BridgePost '/api/stims/preview' @{keyword=$row.Keyword.Trim();path=$file.Path;volume=([double]$file.Volume/100);output_device=(Get-AudioStimPreviewOutput)});$script:stimView.FindName('Status').Text='Preview queued.'}}catch{$script:stimView.FindName('Status').Text=$_.Exception.Message}})
     $view.FindName('Random').Add_Click({try{$row=$script:stimLibraryGrid.SelectedItem;if($row){$draft=Get-AudioStimDraft;$result=(Invoke-BridgePost '/api/stims/preview' @{keyword=$row.Keyword.Trim();library=$draft[$row.Keyword.Trim()];output_device=(Get-AudioStimPreviewOutput)}).result;$script:stimView.FindName('Status').Text='Random preview: '+[IO.Path]::GetFileName([string]$result.file)}}catch{$script:stimView.FindName('Status').Text=$_.Exception.Message}})
     Install-AudioStimActionPicker
     Install-AudioStimContextMenus
+    Install-AudioStimDesign
     Refresh-AudioStims
 }
 
@@ -161,7 +167,7 @@ function script:Invoke-AudioStimMenu([string]$command){
         'reset-file' {if($file){$file.Volume=100.0;$file.Weight=1.0;$script:stimFilesGrid.Items.Refresh();Update-GlobalSaveGroup 'Audio Stims'}}
         'copy-path' {if($file){[Windows.Clipboard]::SetText([string]$file.Path)}}
         'toggle-library' {if($row){$row.Enabled=-not $row.Enabled;$script:stimEnabledCheck.IsChecked=$row.Enabled;Update-GlobalSaveGroup 'Audio Stims'}}
-        'rename' {if($row){[void]$script:stimKeywordBox.Focus();$script:stimKeywordBox.SelectAll()}}
+        'rename' {if($row){Show-AudioStimEditor}}
         default {$button=$script:stimView.FindName($command);if($button){$button.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))}}
     }
 }

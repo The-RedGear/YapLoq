@@ -18,7 +18,8 @@ a conversation between characters, or keep things simple with one voice for chat
 - Create voices with their own names, colors and icons, and assign them to
   viewers or roles.
 - Use `[Voice name]` tags to switch voices within a message.
-- Manage speech and replay recordings from one queue.
+- Mix in sound effects with `[Keyword]` tags and weighted sound libraries.
+- Expand messages in the queue and replay their voices and sounds together.
 - Bring chat commands, channel-point rewards and playback events into your
   Streamer.bot setup.
 - Choose what gets spoken with pronunciation rules, text filters and cooldowns.

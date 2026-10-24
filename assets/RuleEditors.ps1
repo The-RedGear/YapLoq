@@ -91,6 +91,23 @@ function Load-ProfanityRules($settings) {
     Update-ProfanityDisplay
 }
 
+function Set-ProfanityStimChoices($picker,$settings) {
+    if(-not (Get-Command Set-AliasChoicePicker -ErrorAction SilentlyContinue)){. (Join-Path $resourceRoot 'assets\AliasChoices.ps1')}
+    Initialize-AliasChoices
+    if($settings.audio_stims){foreach($entry in $settings.audio_stims.PSObject.Properties){
+        $name=$entry.Name;$value=$entry.Value
+        $accent=Get-VoiceAccent ([string]$value.color)
+        $icon=Resolve-VoiceIcon $(if($value.icon_id){[string]$value.icon_id}else{'mdi:waveform'}) -Color $accent
+        $choice=[YapLoqAliasChoice]::new();$choice.Label=$name;$choice.IconGeometry=$icon.Geometry
+        $choice.IconBrush=if($icon.Brush){$icon.Brush}else{[Windows.Media.BrushConverter]::new().ConvertFromString($accent)}
+        $choice.AccentBrush=[Windows.Media.BrushConverter]::new().ConvertFromString($accent)
+        $choice.AccentBackground=[Windows.Media.BrushConverter]::new().ConvertFromString('#33'+$accent.Substring(1))
+        [YapLoqAliasChoiceConverter]::Choices[$name]=$choice
+        [void]$picker.Items.Add($name)
+    }}
+    Set-AliasChoicePicker $picker
+}
+
 function Show-ProfanityDialog($row) {
     $d = Load-Xaml (Join-Path $resourceRoot 'assets\ProfanityDialog.xaml'); $d.Owner=$window; Apply-AppFont $d
     $show = $d.FindName('ShowWords'); $action = $d.FindName('Action'); $forms = $d.FindName('MatchVariants')
@@ -100,7 +117,7 @@ function Show-ProfanityDialog($row) {
     }
     $action.SelectedIndex=0
     $stimPicker=$d.FindName('StimSelection');$stimSettings=Read-Settings
-    if($stimSettings.audio_stims){foreach($name in $stimSettings.audio_stims.PSObject.Properties.Name){[void]$stimPicker.Items.Add($name)}}
+    Set-ProfanityStimChoices $stimPicker $stimSettings
     if($row -and $row.Action -eq 'stim'){$stimPicker.SelectedItem=$row.Replacement}
     if($row){$forms.IsChecked=$row.MatchVariants;foreach($i in $action.Items){if($i.Tag -eq $row.Action){$action.SelectedItem=$i}}}
     $show.Add_Click({

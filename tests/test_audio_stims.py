@@ -40,6 +40,70 @@ def wait_until(check):
     assert check()
 
 
+def test_group_replay_keeps_order_and_stims_out_of_cache(setup):
+    engine, path, wav = setup
+    engine._synthesize = lambda job: wav
+    played = []
+    engine.audio = Mock(warning='', remaining_seconds=0, elapsed_seconds=0, duration_seconds=0, progress=0)
+    engine.audio.decode_wav = lambda *a, **k: (b'pcm', 100)
+    engine.audio.play.side_effect = lambda *a, **k: played.append(engine._current.alias.name) or True
+    submit(engine, '[Wallace] Before [Fart] after')
+    jobs = list(engine.pending.queue)
+    group_id = jobs[0].group_id
+    assert group_id and {j.group_id for j in jobs} == {group_id}
+    engine.start()
+    wait_until(lambda: len(engine.history) == 3 and engine._current is None)
+    cache = list((engine.settings.path.parent / 'audio_cache').glob('*.wav'))
+    assert len(cache) == 2
+    stim = next(e for e in engine.history_items() if e['audioStim'])
+    assert stim['audioPath'] == str(path)
+    engine.replay_group(group_id)
+    wait_until(lambda: len(played) == 6 and engine._current is None)
+    assert played == ['Wallace', 'Fart', 'Wallace'] * 2
+    assert len(engine.history) == 3
+    assert list((engine.settings.path.parent / 'audio_cache').glob('*.wav')) == cache
+    path.unlink()
+    with pytest.raises(ValueError, match='expired'):
+        engine.replay_group(group_id)
+    assert engine.pending.empty()  # Never replay only the beginning of a broken group.
+
+
+def test_groups_do_not_use_external_message_ids_and_survive_recovery(setup):
+    engine, _, _ = setup
+    submit(engine, '[Wallace] A [Fart] B')
+    first = list(engine.pending.queue)
+    submit(engine, '[Wallace] C [Fart] D')
+    assert first[0].group_id != list(engine.pending.queue)[-1].group_id
+    engine.settings.persist_queue = True
+    engine._save_queue()
+    other = SpeechEngine(engine.settings, EventBus())
+    try:
+        restored = list(other.pending.queue)
+        assert [(j.group_id, j.segment_index, j.group_size) for j in restored] == [(j.group_id, j.segment_index, j.group_size) for j in engine.pending.queue]
+    finally:
+        other.shutdown()
+
+
+def test_pause_part_is_replayable_without_a_cache_file(setup):
+    engine, _, wav = setup
+    engine.settings.audio_stims['Fart']['playback_mode'] = 'pause'
+    engine.settings.audio_stims['Fart']['pause_seconds'] = .1
+    engine._synthesize = lambda job: wav
+    played = []
+    engine.audio = Mock(warning='', remaining_seconds=0, elapsed_seconds=0, duration_seconds=0, progress=0)
+    engine.audio.decode_wav = lambda *a, **k: (b'pcm', 100)
+    engine.audio.play.side_effect = lambda *a, **k: played.append(engine._current.alias.name) or True
+    submit(engine, '[Wallace] Before [Fart] after')
+    group_id = engine.pending.queue[0].group_id
+    engine.start()
+    wait_until(lambda: len(engine.history_items()) == 3 and engine._current is None)
+    pause = next(e for e in engine.history_items() if e['audioStim'])
+    assert pause['audioPath'] == ''
+    engine.replay_group(group_id)
+    wait_until(lambda: len(played) == 6 and engine._current is None)
+    assert len(list((engine.settings.path.parent / 'audio_cache').glob('*.wav'))) == 2
+
+
 def test_mixed_segments_keep_voice_order_sender_and_one_queue_event(setup):
     engine, path, _=setup
     result=submit(engine,'[Wallace] First [Fart] second [Plankton] Third [Fart] fourth')
@@ -334,3 +398,16 @@ def test_pause_when_viewer_available(setup,viewer,pause):
     validated=validate_libraries({'Fart':config})
     assert validated['Fart']['playback_mode']=='pause_with_user'
     assert bool(resolve_stim(engine.settings,'Fart',viewer).audio_stim.get('pause_seconds'))==pause
+
+
+def test_stim_appearance_uses_alias_palette_and_persists(setup):
+    from voice_studio_speaker_bridge.audio_stims import resolve_stim
+    engine,_,_=setup
+    config=engine.settings.audio_stims['Fart'];config.update(icon_id='tabler:cat',color='#87C9AF')
+    engine.settings.save()
+    loaded=Settings(engine.settings.path)
+    alias=resolve_stim(loaded,'Fart')
+    assert alias.icon_id=='tabler:cat' and alias.color=='#87C9AF'
+    submit(engine,'[Fart]')
+    job=engine.pending.queue[0]
+    assert engine._job_dict(job)['color']=='#87C9AF' and engine._job_dict(job)['icon_id']=='tabler:cat'

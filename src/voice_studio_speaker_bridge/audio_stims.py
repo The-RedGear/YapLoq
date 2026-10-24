@@ -53,11 +53,13 @@ def validate_libraries(raw, aliases=(), *, legacy=False):
                 raise ValueError('Sound volume must be 0–100% and random weight 1–100')
             entries.append(dict(path=path, volume=volume, weight=weight, enabled=enabled))
         names.add(key)
+        appearance = VoiceAlias(name, icon_id=value.get('icon_id', 'mdi:waveform'), color=value.get('color', '#B6A3FF'))
         mode = value.get('playback_mode', 'sound')
         seconds = float(value.get('pause_seconds', 1))
         if mode not in {'sound', 'pause', 'pause_without_user', 'pause_with_user'} or not math.isfinite(seconds) or not .1 <= seconds <= 60:
             raise ValueError('Choose a playback mode and a pause from 0.1 to 60 seconds')
         result[name] = dict(enabled=bool(value.get('enabled', True)), files=entries,
+                            icon_id=appearance.icon_id, color=appearance.color,
                             output_device=str(value.get('output_device', '')),
                             playback_mode=mode, pause_seconds=seconds,
                             action=str(value.get('action', '')).strip()[:256],
@@ -81,7 +83,7 @@ def resolve_stim(settings, name, viewer=None):
     if pause:
         metadata = dict(name=label, file='', action=config['action'], replay_actions=config['replay_actions'],
                         allow_without_user=config.get('allow_without_user', False), pause_seconds=config.get('pause_seconds', 1))
-        return VoiceAlias(label, provider='audio-stim', voice_id='', volume=1, output_device=output, icon_id='mdi:timer-sand', audio_stim=metadata)
+        return VoiceAlias(label, provider='audio-stim', voice_id='', volume=1, output_device=output, icon_id=config.get('icon_id', 'mdi:waveform'), color=config.get('color', '#B6A3FF'), audio_stim=metadata)
     available = [entry for entry in config['files'] if entry['enabled'] and entry['weight'] > 0 and Path(entry['path']).is_file()]
     if not available:
         raise ValueError(f'Audio Stim [{label}] has no available enabled sounds')
@@ -90,7 +92,7 @@ def resolve_stim(settings, name, viewer=None):
         raise ValueError('Audio Stim file exceeds 64 MB')
     metadata = dict(name=label, file=chosen['path'], action=config['action'], replay_actions=config['replay_actions'], allow_without_user=config.get('allow_without_user', False))
     return VoiceAlias(label, provider='audio-stim', voice_id=chosen['path'], volume=chosen['volume'], output_device=output,
-                      icon_id='mdi:waveform', audio_stim=metadata)
+                      icon_id=config.get('icon_id', 'mdi:waveform'), color=config.get('color', '#B6A3FF'), audio_stim=metadata)
 
 
 def replace_censored_words(text, settings):

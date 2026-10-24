@@ -49,5 +49,6 @@ public static class YapLoqFolderPicker {
 }
 function script:Select-YapLoqFolder([string]$title='Choose a folder'){
     Initialize-YapLoqFilePickers
-    return [YapLoqFolderPicker]::Pick(([Windows.Interop.WindowInteropHelper]::new($window)).Handle,$title)
+    $owner=if($script:stimEditorWindow -and $script:stimEditorWindow.IsVisible){$script:stimEditorWindow}else{$window}
+    return [YapLoqFolderPicker]::Pick(([Windows.Interop.WindowInteropHelper]::new($owner)).Handle,$title)
 }

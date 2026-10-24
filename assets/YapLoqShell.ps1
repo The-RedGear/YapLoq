@@ -839,6 +839,83 @@ function Show-QueuedVoiceDialog {
     if($dialog.ShowDialog()){$BottomStatus.Text='Queued message voice changed';Refresh-ServiceState}
 }
 
+function Get-YapLoqQueueGroups($Rows) {
+    $seen=@{};$batches=@{}
+    foreach($part in $Rows){if($part.GroupId){if(-not $batches.ContainsKey($part.GroupId)){$batches[$part.GroupId]=[Collections.Generic.List[object]]::new()};$batches[$part.GroupId].Add($part)}}
+    foreach($row in $Rows){
+        if(-not $row.GroupId){$row;continue}
+        if($seen.ContainsKey($row.GroupId)){continue};$seen[$row.GroupId]=$true
+        $parts=@($batches[$row.GroupId]|Sort-Object SegmentIndex)
+        if($parts.Count -lt 2){$row;continue}
+        foreach($part in $parts){$part|Add-Member NoteProperty PartNumber ([int]$part.SegmentIndex+1) -Force}
+        $group=$row|Select-Object *
+        $firstVoice=@($parts|Where-Object{-not $_.IsAudioStim})[0]
+        if($firstVoice){
+            foreach($property in @('Accent','AccentBackground','IconGeometry','IconBrush')){$group|Add-Member NoteProperty $property $firstVoice.$property -Force}
+        }else{
+            $accent=Get-VoiceAccent '';$folder=Resolve-VoiceIcon 'mdi:folder-open' -Color $accent
+            $group.Accent=$accent;$group.AccentBackground='#33'+$accent.Substring(1)
+            $group.IconGeometry=$folder.Geometry;$group.IconBrush=[Windows.Media.BrushConverter]::new().ConvertFromString($accent)
+        }
+        $group.Id='group:'+$row.GroupId
+        $group.Alias=$parts.Count.ToString()+' parts'
+        $group.Text=($parts.Text -join ' ')
+        $active=@($parts|Where-Object{$_.RowKind -eq 'Live'})
+        $group.RowKind=if($active.Count){'Live'}else{'History'}
+        $playing=@($parts|Where-Object{$_.Status -in @('Playing','Paused','Waiting for action','Generating','Queued','Ready')})
+        $group.Status=if($playing.Count){$playing[0].Status}elseif(@($parts|Where-Object{$_.Status -in @('Error','Failed')}).Count){'Failed'}elseif(@($parts|Where-Object{$_.Status -in @('Skipped','Cancelled')}).Count){'Cancelled'}else{'Finished'}
+        $group|Add-Member NoteProperty HasAudio (@($parts|Where-Object{-not $_.HasAudio}).Count -eq 0) -Force
+        $group.AudioLabel='';$group.AudioPath='';$group.SavedPath=''
+        $group|Add-Member NoteProperty IsGroup $true -Force
+        $group|Add-Member NoteProperty Children $parts -Force
+        $group|Add-Member NoteProperty ChildrenSignature (($parts|ForEach-Object{'{0}|{1}|{2}|{3}' -f $_.Id,$_.Status,$_.HasAudio,$_.Text}) -join ';') -Force
+        $group
+    }
+}
+
+function Switch-YapLoqQueueGroup($Item) {
+    if(-not $Item.IsGroup){return}
+    $expanded=-not $script:expandedQueueGroups.ContainsKey($Item.GroupId)
+    if($expanded){$script:expandedQueueGroups[$Item.GroupId]=$true}else{$script:expandedQueueGroups.Remove($Item.GroupId)}
+    $container=$script:unifiedQueueGrid.ItemContainerGenerator.ContainerFromItem($Item)
+    if($container){$container.DetailsVisibility=if($expanded){'Visible'}else{'Collapsed'}}
+}
+
+function Install-YapLoqQueueGroups($Table) {
+    $script:expandedQueueGroups=@{}
+    $Table.RowHeight=[double]::NaN
+    $column=[Windows.Controls.DataGridTemplateColumn]::new();$column.Width=44
+    $column.CellTemplate=[Windows.Markup.XamlReader]::Parse(@'
+<DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
+ <Button Tag="QueueGroup" ToolTip="Expand or collapse message" Padding="0" MinHeight="28" Height="28" Width="28" Foreground="{Binding Accent}" Background="Transparent" BorderThickness="0">
+  <Button.Template><ControlTemplate TargetType="Button"><Border Background="{TemplateBinding Background}" CornerRadius="5"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border></ControlTemplate></Button.Template>
+  <Button.Style><Style TargetType="Button"><Setter Property="Content" Value="&#x25B8;"/><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding IsGroup}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger><DataTrigger Binding="{Binding DetailsVisibility, RelativeSource={RelativeSource AncestorType=DataGridRow}}" Value="Visible"><Setter Property="Content" Value="&#x25BE;"/></DataTrigger></Style.Triggers></Style></Button.Style>
+ </Button>
+</DataTemplate>
+'@)
+    $Table.Columns.Insert(0,$column)
+    $Table.RowDetailsVisibilityMode='Collapsed'
+    $Table.AreRowDetailsFrozen=$true
+    $Table.RowDetailsTemplate=[Windows.Markup.XamlReader]::Parse(@'
+<DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
+ <Border Background="#17141F" Padding="44,8,16,12">
+  <ItemsControl ItemsSource="{Binding Children}"><ItemsControl.ItemTemplate><DataTemplate>
+   <Grid Margin="0,5"><Grid.ColumnDefinitions><ColumnDefinition Width="40"/><ColumnDefinition Width="160"/><ColumnDefinition Width="*"/><ColumnDefinition Width="110"/></Grid.ColumnDefinitions>
+    <TextBlock Text="{Binding PartNumber, StringFormat='{}{0}. '}" Foreground="#B9B2C2"/>
+    <TextBlock Grid.Column="1" Text="{Binding Alias}" Foreground="{Binding Accent}" TextTrimming="CharacterEllipsis"/>
+    <TextBlock Grid.Column="2" Text="{Binding Text}" Foreground="#F3EFF8" TextWrapping="Wrap" Margin="8,0"/>
+    <TextBlock Grid.Column="3" Text="{Binding Status}" Foreground="#B9B2C2" HorizontalAlignment="Right"><TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><DataTrigger Binding="{Binding Status}" Value="Finished"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
+   </Grid>
+  </DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+ </Border>
+</DataTemplate>
+'@)
+    $Table.AddHandler([Windows.Controls.Button]::ClickEvent,[Windows.RoutedEventHandler]{param($sender,$e)
+        if($e.OriginalSource -is [Windows.Controls.Button] -and $e.OriginalSource.Tag -eq 'QueueGroup'){Switch-YapLoqQueueGroup $e.OriginalSource.DataContext;$e.Handled=$true}
+    })
+    $Table.Add_LoadingRow({param($sender,$e)$e.Row.DetailsVisibility=if($e.Row.Item.IsGroup -and $script:expandedQueueGroups.ContainsKey($e.Row.Item.GroupId)){'Visible'}else{'Collapsed'}})
+}
+
 function Install-YapLoqCombinedQueue {
     # Keep the original grids as command/selection adapters, with one visible table.
     $QueuePage.Children.Clear();$QueuePage.RowDefinitions.Clear()
@@ -871,9 +948,10 @@ function Install-YapLoqCombinedQueue {
     # Sorting is intentionally disabled so live jobs cannot mix with history.
     foreach($column in @($QueueGrid.Columns)){[void]$QueueGrid.Columns.Remove($column);$table.Columns.Add($column)}
     $table.RowStyle=$window.FindResource('SpeechGridRow')
+    Install-YapLoqQueueGroups $table
     $table.Add_SelectionChanged({Sync-YapLoqQueueSelection $true})
     $table.Add_ContextMenuOpening({param($sender,$e)if(-not $sender.SelectedItem -or $sender.SelectedItem.IsDivider){$e.Handled=$true}})
-    $table.Add_MouseDoubleClick({$row=$script:unifiedQueueGrid.SelectedItem;if($row -and $row.RowKind -eq 'History' -and $row.HasAudio){$ReplayHistoryButton.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))}})
+    $table.Add_MouseDoubleClick({$row=$script:unifiedQueueGrid.SelectedItem;if($row.IsGroup){Switch-YapLoqQueueGroup $row}elseif($row -and $row.RowKind -eq 'History' -and $row.HasAudio){$ReplayHistoryButton.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))}})
     $border=[Windows.Controls.Border]::new();$border.CornerRadius=10;$border.BorderThickness=1;$border.BorderBrush=[Windows.Media.BrushConverter]::new().ConvertFromString('#50485C');$border.Child=$table
     [Windows.Controls.Grid]::SetRow($border,2);[void]$QueuePage.Children.Add($border)
     $pause=$PauseAfterQueueButton;if($pause.Parent -is [Windows.Controls.Panel]){[void]$pause.Parent.Children.Remove($pause)}
@@ -906,6 +984,7 @@ function Sync-YapLoqQueueSelection([bool]$UserSelection=$false) {
         $button.Visibility=if(($isLive -and $row.RowKind -eq 'Live' -and -not $isCurrent) -or (-not $isLive -and $row.RowKind -eq 'History')){'Visible'}else{'Collapsed'}
         $button.IsEnabled=if($isLive){$row.Id -and $row.Id -ne $script:lastPlaybackState.current.id}elseif($button -eq $ShowHistoryAudioButton){$button.IsEnabled}elseif($button -eq $ReplayHistoryButton){$row.HasAudio -and $row.Status -notin @('Queued','Playing','Paused','Generating','Waiting for action')}else{[bool]$row.HasAudio}
         if($button -eq $script:queueChangeVoiceButton){$button.IsEnabled=$button.IsEnabled -and $row.Status -eq 'Queued'}
+        if($row.IsGroup -and $button -ne $ReplayHistoryButton){$button.Visibility='Collapsed'}
     }
 }
 
@@ -921,7 +1000,7 @@ function Update-YapLoqUnifiedQueue {
     $history=@($HistoryGrid.ItemsSource|Where-Object{$_ -and $_.Id -notin $liveIds})
     $visibleLive=[Collections.Generic.List[object]]::new();$replayStatuses=@{}
     foreach($job in $queued){
-        $original=if($job.Source -eq 'History recording' -and $job.AudioPath){@($history|Where-Object{$_.AudioPath -eq $job.AudioPath -or $_.SavedPath -eq $job.AudioPath})[0]}else{$null}
+        $original=if($job.Source -eq 'History recording'){@($history|Where-Object{if($job.OriginalId){$_.Id -eq $job.OriginalId}else{$job.AudioPath -and ($_.AudioPath -eq $job.AudioPath -or $_.SavedPath -eq $job.AudioPath)}})[0]}else{$null}
         if($original){
             # The first matching job is the active replay; retain the recording's
             # original position, timestamp and source instead of showing a duplicate.
@@ -940,7 +1019,8 @@ function Update-YapLoqUnifiedQueue {
     # A job can leave the live snapshot one poll before history catches up.
     # Retain that row through the handoff instead of removing/reinserting it.
     $incomingIds=@($incoming.Id)
-    foreach($old in @($table.ItemsSource)){
+    $previous=@(foreach($item in @($table.ItemsSource)){if($item.IsGroup){$item.Children}else{$item}})
+    foreach($old in $previous){
         if(($old.RowKind -eq 'Live' -or $old.PendingHistory) -and $old.Id -notin $incomingIds){
             $handoff=$old|Select-Object *;$handoff.Status='Finished';$handoff.RowKind='History'
             $handoff|Add-Member NoteProperty PendingHistory $true -Force
@@ -950,7 +1030,8 @@ function Update-YapLoqUnifiedQueue {
     $available=@{};foreach($row in $incoming){$available[[string]$row.Id]=$row}
     $ordered=@(Sort-YapLoqSpeechRows $incoming)
     $script:queueDisplayOrder=@($ordered.Id)
-    $signature=(@($ordered|ForEach-Object{'{0}|{1}|{2}|{3}|{4}|{5}|{6}|{7}|{8}|{9}|{10}' -f $_.Id,$_.Status,$_.Accent,$_.IconGeometry,$_.AudioLabel,$_.Text,$_.SavedPath,$_.HasAudio,$_.RowKind,$_.PendingHistory,$_.Error}) -join ';')+'|live='+$live.Count
+    $ordered=@(Get-YapLoqQueueGroups $ordered)
+    $signature=(@($ordered|ForEach-Object{'{0}|{1}|{2}|{3}|{4}|{5}|{6}|{7}|{8}|{9}|{10}|{11}' -f $_.Id,$_.Status,$_.Accent,$_.IconGeometry,$_.AudioLabel,$_.Text,$_.SavedPath,$_.HasAudio,$_.RowKind,$_.PendingHistory,$_.Error,$_.ChildrenSignature}) -join ';')+'|live='+$live.Count
     if($signature -ne $script:unifiedQueueSignature){
         $selectedId=if($table.SelectedItem.Id){[string]$table.SelectedItem.Id}else{$script:unifiedSelectionId}
         $items=$table.ItemsSource
@@ -968,13 +1049,18 @@ function Update-YapLoqUnifiedQueue {
                     if($found -ge 0){$items.Move($found,$index)}else{$items.Insert($index,$row)}
                 }
                 $old=$items[$index]
-                $before=(@('Status','Text','Alias','Accent','IconGeometry','AudioLabel','SavedPath','HasAudio','RowKind','PendingHistory','Error')|ForEach-Object{[string]$old.$_}) -join '|'
-                $after=(@('Status','Text','Alias','Accent','IconGeometry','AudioLabel','SavedPath','HasAudio','RowKind','PendingHistory','Error')|ForEach-Object{[string]$row.$_}) -join '|'
+                $before=(@('Status','Text','Alias','Accent','IconGeometry','AudioLabel','SavedPath','HasAudio','RowKind','PendingHistory','Error','ChildrenSignature')|ForEach-Object{[string]$old.$_}) -join '|'
+                $after=(@('Status','Text','Alias','Accent','IconGeometry','AudioLabel','SavedPath','HasAudio','RowKind','PendingHistory','Error','ChildrenSignature')|ForEach-Object{[string]$row.$_}) -join '|'
                 if($before -ne $after){$items[$index]=$row}
             }
             Set-QueueSpeechFilter
             if($selectedId){$table.SelectedItem=@($table.Items|Where-Object{$_.Id -eq $selectedId})[0]}
             if($scroll){$scroll.ScrollToVerticalOffset($offset)}
+            $table.UpdateLayout()
+            foreach($entry in $items){
+                $container=$table.ItemContainerGenerator.ContainerFromItem($entry)
+                if($container){$container.DetailsVisibility=if($entry.IsGroup -and $script:expandedQueueGroups.ContainsKey($entry.GroupId)){'Visible'}else{'Collapsed'}}
+            }
         }finally{$script:syncingUnifiedQueue=$false}
         $script:unifiedQueueSignature=$signature
     }
@@ -1051,6 +1137,8 @@ function Install-YapLoqItemMenu($control, $actions, [bool]$PageActions=$false) {
                 $item.Visibility=if(($historyCommand -and $row.RowKind -ne 'History') -or ($liveCommand -and -not $moveCommand -and $row.RowKind -ne 'Live')){'Collapsed'}else{'Visible'}
                 if($liveCommand){$enabled=$enabled -and $row.RowKind -eq 'Live' -and $row.Id -ne $script:lastPlaybackState.current.id}
                 if($historyCommand){$enabled=$enabled -and $row.HasAudio}
+                if($row.IsGroup -and $command.Command -notin @('ReplayHistoryButton','copy:Text') -and $command.Command -ne $script:queueDetailsButton){$item.Visibility='Collapsed';$enabled=$false}
+                if($row.IsGroup -and $command.Command -eq 'ReplayHistoryButton'){$enabled=$enabled -and $row.Status -notin @('Queued','Ready','Playing','Paused','Generating','Waiting for action')}
                 $enabled=$enabled -and -not $row.IsDivider
             }
             $item.IsEnabled=[bool]$enabled

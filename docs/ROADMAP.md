@@ -70,7 +70,7 @@ Defer additional providers and cosmetic expansion until these are verified.
 - [x] Play voice and sound segments in their exact input order. Sound tags must
   not change the active voice; speech after a sound continues with that voice
   until another voice tag appears.
-- [ ] Show sound segments alongside voice segments in the queue, grouped under
+- [x] Show sound segments alongside voice segments in the queue, grouped under
   the original message. Emit the queue-added trigger once per message, not once
   per sound or split segment; preserve stable newest-first message ordering.
 - [x] Validate missing/unreadable files and empty libraries, and make voice/sound

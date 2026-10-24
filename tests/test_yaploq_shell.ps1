@@ -65,7 +65,7 @@ if($azure.Mask.Password -or $azure.Hint.Visibility -ne 'Visible' -or $azure.Togg
 Save-AzureSettings
 if((Read-Settings).azure_subscription_key_encrypted -ne 'unreadable-fixture'){throw 'Saving an unreadable credential replaced it with placeholder characters'}
 if(($script:ownerSections.Queue | ForEach-Object {$_[1]}) -join ',' -ne 'queue,rules'){throw 'History still has a separate tab'}
-if($script:unifiedQueueGrid.Parent.Parent -ne $QueuePage -or $script:unifiedQueueGrid.Columns.Count -ne 6){throw 'Queue needs one full-height table with shared columns'}
+if($script:unifiedQueueGrid.Parent.Parent -ne $QueuePage -or $script:unifiedQueueGrid.Columns.Count -ne 7){throw 'Queue needs one full-height table with shared columns and message expansion'}
 if($script:unifiedQueueGrid.Items.Count -ne 0){throw 'Empty Queue should not contain section bars'}
 if($PauseAfterQueueButton.Parent -ne $NowPlayingSkipButton.Parent){throw 'Pause after current must live in the media bar'}
 foreach($table in @($QueueGrid,$HistoryGrid,$PlaylistGrid,$PronunciationGrid,$VoiceRulesGrid,$RoutingGrid,$script:profanityGrid,$EventTimelineGrid)){
@@ -247,13 +247,13 @@ Set-Page 'queue'
 $generating=New-QueueSpeechRow ([pscustomobject]@{id='generating';alias='Mint voice';text='test';status='Generating'})
 $QueueGrid.ItemsSource=@($generating);Update-YapLoqUnifiedQueue
 $window.UpdateLayout();$window.Dispatcher.Invoke([Action]{},[Windows.Threading.DispatcherPriority]::ContextIdle)
-$cell=$script:unifiedQueueGrid.Columns[0].GetCellContent($generating);$cell.ApplyTemplate()|Out-Null
+$cell=$script:unifiedQueueGrid.Columns[1].GetCellContent($generating);$cell.ApplyTemplate()|Out-Null
 $spinner=$cell.ContentTemplate.FindName('GeneratingIcon',$cell)
 if($spinner.Visibility -ne 'Visible' -or -not $spinner.Child.RenderTransform.HasAnimatedProperties -or $spinner.Child.Children[0].Stroke.Color.ToString() -ne '#FF87C9AF'){throw 'Generating row needs an animated alias-colored loading icon'}
 $queued=New-QueueSpeechRow ([pscustomobject]@{id='queued';alias='Mint voice';text='test';status='Queued'})
 $QueueGrid.ItemsSource=@($queued);Update-YapLoqUnifiedQueue
 $window.UpdateLayout();$window.Dispatcher.Invoke([Action]{},[Windows.Threading.DispatcherPriority]::ContextIdle)
-$cell=$script:unifiedQueueGrid.Columns[0].GetCellContent($queued);$cell.ApplyTemplate()|Out-Null
+$cell=$script:unifiedQueueGrid.Columns[1].GetCellContent($queued);$cell.ApplyTemplate()|Out-Null
 if($cell.ContentTemplate.FindName('GeneratingIcon',$cell).Visibility -ne 'Collapsed' -or $cell.ContentTemplate.FindName('AliasIcon',$cell).Visibility -ne 'Visible'){throw 'Queue row did not restore its alias icon after generation'}
 Set-Page 'history'
 if($script:activePage -ne 'queue' -or -not $script:unifiedQueueGrid.IsVisible){throw 'History shortcut must open the shared Queue view'}
@@ -444,5 +444,39 @@ $script:unifiedQueueGrid.ItemsSource=@($voiceDraft);$script:unifiedQueueGrid.Sel
 if(-not $script:queueChangeVoiceButton.IsEnabled){throw 'Queued message voice change is unavailable'}
 $voiceDraft.Status='Generating';Sync-YapLoqQueueSelection
 if($script:queueChangeVoiceButton.IsEnabled){throw 'Generating message allows voice changes'}
+$parts=@(0..2|ForEach-Object{
+    $part=New-QueueSpeechRow ([pscustomobject]@{id=('part-'+$_);groupId='group-fixture';segmentIndex=$_;alias='Mint voice';text=@('Hello','[Fart]','Goodbye')[$_];status='Finished';timestamp=('2026-10-24T12:00:0'+$_+'Z')})
+    $part|Add-Member NoteProperty HasAudio $true -Force;$part|Add-Member NoteProperty SavedPath '' -Force;$part
+})
+$script:unifiedQueueGrid.ItemsSource=@();$script:unifiedQueueSignature=''
+$QueueGrid.ItemsSource=@();$HistoryGrid.ItemsSource=@($parts[2],$parts[1],$parts[0]);Update-YapLoqUnifiedQueue
+$group=$script:unifiedQueueGrid.ItemsSource[0]
+if($script:unifiedQueueGrid.Items.Count -ne 1 -or -not $group.IsGroup -or ($group.Children.Id -join ',') -ne 'part-0,part-1,part-2'){throw 'A split message must be one group with parts in playback order'}
+foreach($part in $parts){$part|Add-Member NoteProperty RowKind 'History' -Force}
+$parts[2].Accent='#E6A0B1';$parts[2].IconGeometry=(Resolve-VoiceIcon 'mdi:waveform').Geometry
+$appearanceGroup=@(Get-YapLoqQueueGroups @($parts[2],$parts[1],$parts[0]))[0]
+if($appearanceGroup.Accent -ne $parts[0].Accent -or $appearanceGroup.IconGeometry -ne $parts[0].IconGeometry){throw 'Queue folder must use the first voice, not the latest segment'}
+$parts[0].IsAudioStim=$true
+$appearanceGroup=@(Get-YapLoqQueueGroups @($parts[2],$parts[1],$parts[0]))[0]
+if($appearanceGroup.Accent -ne $parts[1].Accent -or $appearanceGroup.IconGeometry -ne $parts[1].IconGeometry){throw 'Queue folder must skip a leading Audio Stim'}
+$parts[1].IsAudioStim=$true;$parts[2].IsAudioStim=$true
+$appearanceGroup=@(Get-YapLoqQueueGroups @($parts[2],$parts[1],$parts[0]))[0]
+if($appearanceGroup.IconGeometry.ToString() -ne (Resolve-VoiceIcon 'mdi:folder-open').Geometry.ToString()){throw 'Sound-only groups must use a neutral folder, never a stim icon'}
+foreach($part in $parts){$part.IsAudioStim=$false}
+Set-Page 'queue';$window.UpdateLayout();Switch-YapLoqQueueGroup $group;$window.UpdateLayout()
+$container=$script:unifiedQueueGrid.ItemContainerGenerator.ContainerFromItem($group)
+if($container.DetailsVisibility -ne 'Visible'){throw 'Message group did not expand'}
+$script:unifiedQueueGrid.SelectedItem=$group;Sync-YapLoqQueueSelection
+if(-not $ReplayHistoryButton.IsEnabled -or $SaveHistoryAudioButton.Visibility -ne 'Collapsed'){throw 'Message group needs replay without per-file save controls'}
+$parts[1].Status='Playing';Update-YapLoqUnifiedQueue;$window.UpdateLayout()
+if(-not $script:expandedQueueGroups.ContainsKey('group-fixture') -or $script:unifiedQueueGrid.ItemsSource[0].Status -ne 'Playing'){throw 'Updating a part lost expansion or active group status'}
+$container=$script:unifiedQueueGrid.ItemContainerGenerator.ContainerFromItem($script:unifiedQueueGrid.ItemsSource[0])
+if($container.DetailsVisibility -ne 'Visible'){throw 'A status update collapsed the message group'}
+$presenter=$container.Template.FindName('PART_DetailsPresenter',$container)
+if(-not $presenter -or $presenter.ActualHeight -lt 40){throw 'Expanded audio parts are missing from the visible row template'}
+if($OutputDirectory){
+    $bitmap=[Windows.Media.Imaging.RenderTargetBitmap]::new([int]$window.ActualWidth,[int]$window.ActualHeight,96,96,[Windows.Media.PixelFormats]::Pbgra32);$bitmap.Render($window)
+    $encoder=[Windows.Media.Imaging.PngBitmapEncoder]::new();$encoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($bitmap));$stream=[IO.File]::Create((Join-Path $OutputDirectory 'queue-group.png'));try{$encoder.Save($stream)}finally{$stream.Dispose()}
+}
 $window.Close()
 'YapLoq shell passed: six routes, unified rules, Dashboard state, 14 views at two sizes, 132 provider selections, repeated sidebar/hover events, direct service back navigation and failed-route recovery.'

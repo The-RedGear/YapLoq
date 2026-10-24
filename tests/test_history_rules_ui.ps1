@@ -59,6 +59,7 @@ if($HistoryGrid.SelectedIndex -ne 0){throw 'Clicking cell whitespace did not sel
 $script:postBody=$null
 function Invoke-BridgePost($path,$body){$script:postBody=$body}
 function Refresh-ServiceState{}
+function Read-Settings {return [pscustomobject]@{audio_stims=[pscustomobject]@{Fart=[pscustomobject]@{icon_id='mdi:waveform';color='#87C9AF'}}}}
 foreach($node in $ast.EndBlock.Statements){if($node.Extent.Text -match '^if \(\$NowPlayingPlayPauseButton\)'){Invoke-Expression $node.Extent.Text}}
 $NowPlayingPlayPauseButton.Tag='idle';$script:lastHistorySpeechId='not-selected'
 $NowPlayingPlayPauseButton.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
@@ -73,6 +74,11 @@ $window.Dispatcher.BeginInvoke([action]{
 }) | Out-Null
 $result=Show-ProfanityDialog $null
 if($result.word -ne 'custom' -or $result.variants.Count -ne 2 -or $result.replacement -ne 'one, two'){throw 'Masked dialog save failed'}
+$stimPicker=[Windows.Controls.ComboBox]::new()
+Set-ProfanityStimChoices $stimPicker ([pscustomobject]@{audio_stims=[pscustomobject]@{Fart=[pscustomobject]@{icon_id='mdi:waveform';color='#87C9AF'}}})
+$stimPicker.SelectedItem='Fart'
+$stimChoice=[YapLoqAliasChoiceConverter]::Choices['Fart']
+if(-not $stimPicker.ItemTemplate -or -not $stimPicker.ItemContainerStyle -or $stimPicker.SelectedItem -ne 'Fart' -or -not $stimChoice.IconGeometry -or $stimChoice.AccentBrush.Color.ToString() -ne '#FF87C9AF'){throw 'Profanity Audio Stim picker lost sound icons, colors or string selections'}
 $script:profanityGrid.BringIntoView();$window.UpdateLayout()
 foreach($asset in @('ProfanityPanel.xaml','ProfanityDialog.xaml')){[void](Load-Xaml (Join-Path $root ('assets\'+$asset)))}
 $PlaylistGrid.ItemsSource=@([pscustomobject]@{Name='A long playlist name that needs several lines';Summary=(('Voice name, ' * 35).TrimEnd(', '));Count=35})
