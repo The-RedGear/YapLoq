@@ -4,7 +4,7 @@ For YapLoq 0.6.5 on Windows 10/11, 64-bit.
 
 ## Queue and replay
 
-Split messages appear as one expandable entry on the Queue page, newest messages first. Expand a message to see its voices, sounds and pauses in playback order. The group uses the first voice alias's icon and color, even if a sound comes first. Sound-only groups use a neutral folder.
+Split messages appear as one expandable entry on the Dashboard and Queue page, newest messages first. Expand a message to see its voices, sounds and pauses in playback order. The group uses the first voice alias's icon and color, even if a sound comes first. Sound-only groups use a neutral folder.
 
 Select a completed message and choose **Replay** to play the whole message again. Audio Stims use their original sound files, not cached copies; keep those files available for replay. If part of a message is missing, YapLoq reports the problem rather than replaying only part of it.
 

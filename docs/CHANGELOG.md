@@ -2,6 +2,7 @@
 
 ## 0.6.5 — 2026-10-24
 
+- Dashboard queue previews now use expandable message groups with ordered parts, first-voice icons and colors, and full-message replay.
 - Detached punctuation left after a sound replacement no longer becomes speech or a punctuation-only clip. Punctuation within real speech is preserved.
 - Fixed hidden sound-editor transactions blocking unrelated saves or exit. Genuine invalid values remain editable and save errors identify their section and table. Save feedback no longer displays garbled punctuation.
 

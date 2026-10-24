@@ -474,9 +474,31 @@ $container=$script:unifiedQueueGrid.ItemContainerGenerator.ContainerFromItem($sc
 if($container.DetailsVisibility -ne 'Visible'){throw 'A status update collapsed the message group'}
 $presenter=$container.Template.FindName('PART_DetailsPresenter',$container)
 if(-not $presenter -or $presenter.ActualHeight -lt 40){throw 'Expanded audio parts are missing from the visible row template'}
+foreach($part in $parts){$part.Status='Finished'}
+$parts[1].IsAudioStim=$true
+$script:recentHistoryItems=@($parts[2],$parts[1],$parts[0]);$script:dashboardPreviewLimit=1
+Update-YapLoqDashboard ([pscustomobject]@{queue=@()})
+$dashboardGroup=$script:dashboardUpcoming.Children[0]
+if($script:dashboardUpcoming.Children.Count -ne 1 -or -not $dashboardGroup.Tag.IsGroup -or ($dashboardGroup.Tag.Children.Id -join ',') -ne 'part-0,part-1,part-2'){throw 'Dashboard must count complete message groups rather than truncate their segments'}
+if($dashboardGroup.Tag.Accent -ne $parts[0].Accent){throw 'Dashboard group did not keep the first voice color'}
+$dashboardGroup.Resources['GroupToggle'].RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
+if($dashboardGroup.Resources['GroupParts'].Visibility -ne 'Visible' -or $dashboardGroup.Resources['GroupParts'].Children.Count -ne 3){throw 'Dashboard group did not expand its ordered audio parts'}
+$dashboardReplay=@($dashboardGroup.Resources['GroupHeader'].Children|Where-Object{$_ -is [Windows.Controls.Button] -and $_.Tag.IsGroup})[0]
+if(-not $dashboardReplay){throw 'Dashboard message group has no full-message replay button'}
+$dashboardReplay.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
+if($script:recordedRequest -ne '/api/history/replay' -or $script:recordedBody.groupId -ne 'group-fixture' -or $script:recordedBody.speechId){throw 'Dashboard group replay must target the whole message'}
+$parts[1].Status='Playing';Update-YapLoqDashboard ([pscustomobject]@{queue=@()})
+if($script:dashboardUpcoming.Children[0].Resources['GroupParts'].Visibility -ne 'Visible'){throw 'Dashboard group collapsed during a status update'}
+$script:recentHistoryItems=@()
+Update-YapLoqDashboard ([pscustomobject]@{current=[pscustomobject]@{id='live-first';groupId='live-group';segmentIndex=0;alias='Mint voice';text='First';status='Playing'};queue=@([pscustomobject]@{id='live-sound';groupId='live-group';segmentIndex=1;alias='Fart';provider='audio-stim';text='[Fart]';status='Queued'},[pscustomobject]@{id='live-last';groupId='live-group';segmentIndex=2;alias='Mint voice';text='Last';status='Queued'})})
+if(-not $script:dashboardUpcoming.Children[0].Tag.IsGroup -or $script:dashboardUpcoming.Children[0].Tag.PreviewKind -ne 'Live'){throw 'Active Dashboard messages must form a single group'}
 if($OutputDirectory){
     $bitmap=[Windows.Media.Imaging.RenderTargetBitmap]::new([int]$window.ActualWidth,[int]$window.ActualHeight,96,96,[Windows.Media.PixelFormats]::Pbgra32);$bitmap.Render($window)
     $encoder=[Windows.Media.Imaging.PngBitmapEncoder]::new();$encoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($bitmap));$stream=[IO.File]::Create((Join-Path $OutputDirectory 'queue-group.png'));try{$encoder.Save($stream)}finally{$stream.Dispose()}
+    Set-Page 'playground';$script:dashboardUpcoming.Children.Clear();$script:dashboardInputSignature='';$script:dashboardQueueSignature=''
+    foreach($part in $parts){$part.Status='Finished'};$script:recentHistoryItems=@($parts[2],$parts[1],$parts[0]);Update-YapLoqDashboard ([pscustomobject]@{queue=@()});$window.UpdateLayout()
+    $bitmap=[Windows.Media.Imaging.RenderTargetBitmap]::new([int]$window.ActualWidth,[int]$window.ActualHeight,96,96,[Windows.Media.PixelFormats]::Pbgra32);$bitmap.Render($window)
+    $encoder=[Windows.Media.Imaging.PngBitmapEncoder]::new();$encoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($bitmap));$stream=[IO.File]::Create((Join-Path $OutputDirectory 'dashboard-groups.png'));try{$encoder.Save($stream)}finally{$stream.Dispose()}
 }
 if(-not $KeepWindowOpen){$window.Close()}
 'YapLoq shell passed: six routes, unified rules, Dashboard state, 14 views at two sizes, 132 provider selections, repeated sidebar/hover events, direct service back navigation and failed-route recovery.'

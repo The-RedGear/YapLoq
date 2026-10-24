@@ -391,7 +391,7 @@ function Update-YapLoqDashboardAppearance {
 function Invoke-YapLoqPreviewAction([string]$action,$recording) {
     try{
         switch($action){
-            'replay'{if($recording.HasAudio){Invoke-BridgePost '/api/history/replay' @{speechId=[string]$recording.Id}|Out-Null;$BottomStatus.Text='Recording queued';Refresh-ServiceState}}
+            'replay'{if($recording.HasAudio){$body=if($recording.IsGroup){@{groupId=[string]$recording.GroupId}}else{@{speechId=[string]$recording.Id}};Invoke-BridgePost '/api/history/replay' $body|Out-Null;$BottomStatus.Text='Recording queued';Refresh-ServiceState}}
             'save'{Save-SpeechRecording ([string]$recording.Id)}
             'show'{Show-HistoryAudioLocation $recording}
             'copy'{if($recording.Text){[Windows.Clipboard]::SetText([string]$recording.Text)}}
@@ -426,6 +426,30 @@ function Sort-YapLoqSpeechRows($rows) {
     $ordered | ForEach-Object{$_}
 }
 
+function New-DashboardMessageGroup($header,$item) {
+    if(-not $script:dashboardExpandedGroups){$script:dashboardExpandedGroups=@{}}
+    $group=[Windows.Controls.StackPanel]::new();$group.Tag=$item
+    [void]$group.Children.Add($header)
+    $parts=[Windows.Controls.StackPanel]::new();$parts.Margin='20,0,0,6'
+    $parts.Visibility=if($script:dashboardExpandedGroups.ContainsKey($item.GroupId)){'Visible'}else{'Collapsed'}
+    foreach($part in $item.Children){
+        $line=[Windows.Controls.Grid]::new();$line.Height=32;$line.Tag=$part;$line.ToolTip=$part.Text
+        foreach($width in @('150','*','85','30')){$column=[Windows.Controls.ColumnDefinition]::new();$column.Width=$width;$line.ColumnDefinitions.Add($column)}
+        $voice=[Windows.Controls.ContentPresenter]::new();$voice.Content=$part;$voice.ContentTemplate=$window.FindResource('SpeechAliasCell');[void]$line.Children.Add($voice)
+        $text=[Windows.Controls.TextBlock]::new();$text.Text=$part.Text;$text.TextTrimming='CharacterEllipsis';$text.VerticalAlignment='Center';$text.Margin='8,0';[Windows.Controls.Grid]::SetColumn($text,1);[void]$line.Children.Add($text)
+        $status=[Windows.Controls.TextBlock]::new();$status.Text=if($part.Status -eq 'Finished'){''}else{$part.Status};$status.Foreground=$window.FindResource('Muted');$status.VerticalAlignment='Center';$status.HorizontalAlignment='Right';[Windows.Controls.Grid]::SetColumn($status,2);[void]$line.Children.Add($status)
+        [void]$parts.Children.Add($line)
+    }
+    [void]$group.Children.Add($parts);$header.Children[0].Margin='16,0,0,0'
+    $toggle=[Windows.Controls.Button]::new();$toggle.Style=$window.FindResource('PlayerTransportButton');$toggle.Width=18;$toggle.Height=28;$toggle.Margin=0;$toggle.HorizontalAlignment='Left';$toggle.ToolTip='Expand or collapse message'
+    $arrow=[Windows.Shapes.Path]::new();$arrow.Data=[Windows.Media.Geometry]::Parse('M0,0 L5,4 L0,8 Z');$arrow.Fill=[Windows.Media.BrushConverter]::new().ConvertFromString($item.Accent);$arrow.Width=6;$arrow.Height=8;$arrow.Stretch='Uniform';$arrow.RenderTransformOrigin=[Windows.Point]::new(.5,.5);$arrow.RenderTransform=[Windows.Media.RotateTransform]::new($(if($parts.Visibility -eq 'Visible'){90}else{0}));$toggle.Content=$arrow
+    $toggle.Tag=[pscustomobject]@{GroupId=$item.GroupId;Parts=$parts;Arrow=$arrow}
+    $toggle.Add_Click({param($sender,$e)$data=$sender.Tag;$expanded=$data.Parts.Visibility -ne 'Visible';$data.Parts.Visibility=if($expanded){'Visible'}else{'Collapsed'};$data.Arrow.RenderTransform.Angle=if($expanded){90}else{0};if($expanded){$script:dashboardExpandedGroups[$data.GroupId]=$true}else{$script:dashboardExpandedGroups.Remove($data.GroupId)};$e.Handled=$true})
+    [void]$header.Children.Add($toggle)
+    $group.Resources['GroupToggle']=$toggle;$group.Resources['GroupParts']=$parts;$group.Resources['GroupHeader']=$header
+    return $group
+}
+
 function Update-YapLoqDashboard($state) {
     Update-YapLoqDashboardAppearance
     if (-not $script:dashboardUpcoming) { return }
@@ -436,7 +460,7 @@ function Update-YapLoqDashboard($state) {
     $replays=@($live|Where-Object{$_.Source -eq 'History recording'})
     $historyLookup=if($replays.Count){@($HistoryGrid.ItemsSource|Where-Object{$_})+@($script:recentHistoryItems|Where-Object{$_})}else{@()}
     foreach($job in $replays){
-        $original=if($job.AudioPath){@($historyLookup|Where-Object{$_.AudioPath -eq $job.AudioPath -or $_.SavedPath -eq $job.AudioPath})[0]}else{$null}
+        $original=if($job.OriginalId){@($historyLookup|Where-Object{$_.Id -eq $job.OriginalId})[0]}elseif($job.AudioPath){@($historyLookup|Where-Object{$_.AudioPath -eq $job.AudioPath -or $_.SavedPath -eq $job.AudioPath})[0]}else{$null}
         if($original -and -not $replayStatuses.ContainsKey([string]$original.Id)){$replayStatuses[[string]$original.Id]=$job.Status}
     }
     # Replays belong to their existing history slot, never the new-speech prefix.
@@ -450,7 +474,7 @@ function Update-YapLoqDashboard($state) {
         $script:dashboardSortedHistorySource=$script:recentHistoryItems
         $script:dashboardSortedMoveCount=@($script:queueManualMoves).Count
     }
-    $recent=@($script:dashboardSortedHistory | Select-Object -First ($previewLimit+$live.Count) | Where-Object{$_ -and $_.Id -notin $liveIds})
+    $recent=@($script:dashboardSortedHistory | Where-Object{$_ -and $_.Id -notin $liveIds})
     # State is polled faster than history. Keep the just-finished recording in its
     # chronological slot until the matching history snapshot arrives instead of
     # briefly removing it from the Dashboard.
@@ -462,13 +486,33 @@ function Update-YapLoqDashboard($state) {
     }
     $previewLimit=if($script:dashboardPreviewLimit){$script:dashboardPreviewLimit}else{6}
     # Sort cheap row references first; only hydrate/style rows actually displayed.
-    $candidates=@(Sort-YapLoqSpeechRows @($items+$recent) | Select-Object -First $previewLimit)
+    $rows=@($items+$recent)
+    $rowIds=@($rows.Id)
+    foreach($previous in @($script:dashboardUpcoming.Children.Tag|Where-Object{$_.IsGroup})){
+        foreach($part in $previous.Children){
+            if(($part.RowKind -eq 'Live' -or $part.PendingHistory) -and $part.Id -notin $rowIds){
+                $handoff=$part|Select-Object *;$handoff.Status='Finished';$handoff.RowKind='History'
+                $handoff|Add-Member NoteProperty PendingHistory $true -Force;$rows+=$handoff
+            }
+        }
+    }
+    foreach($row in $rows){$row|Add-Member NoteProperty RowKind $(if($row.Id -in $liveIds){'Live'}else{'History'}) -Force}
+    $candidates=@(Get-YapLoqQueueGroups @(Sort-YapLoqSpeechRows $rows) | Select-Object -First $previewLimit)
     $inputSignature=([string]$live.Count)+'|'+(@($candidates|ForEach-Object{
-        '{0}|{1}|{2}|{3}|{4}|{5}|{6}|{7}|{8}' -f $_.Id,$_.Status,$_.Text,$_.Accent,$_.IconGeometry,$_.HasAudio,$_.AudioPath,$_.SavedPath,$replayStatuses[[string]$_.Id]
+        '{0}|{1}|{2}|{3}|{4}|{5}|{6}|{7}|{8}|{9}|{10}' -f $_.Id,$_.Status,$_.Text,$_.Accent,$_.IconGeometry,$_.HasAudio,$_.AudioPath,$_.SavedPath,$replayStatuses[[string]$_.Id],$_.ChildrenSignature,(@($_.Children|ForEach-Object{$replayStatuses[[string]$_.Id]}) -join ',')
     }) -join ';')
     if($script:dashboardInputSignature -eq $inputSignature -and [object]::ReferenceEquals($script:dashboardVoiceSource,$PlayVoiceList.Tag)){return}
     $script:dashboardInputSignature=$inputSignature;$script:dashboardVoiceSource=$PlayVoiceList.Tag
     $items=@(foreach($recording in $candidates){
+        if($recording.IsGroup){
+            $parts=@(foreach($part in $recording.Children){
+                $child=$part|Select-Object *
+                if($replayStatuses.ContainsKey([string]$child.Id)){$child.Status=$replayStatuses[[string]$child.Id]}
+                Add-SpeechRowAppearance $child;$child
+            })
+            $display=@(Get-YapLoqQueueGroups @(Sort-YapLoqSpeechRows $parts))[0]
+            $display|Add-Member NoteProperty PreviewKind $display.RowKind -Force;$display;continue
+        }
         if($recording.Id -in $liveIds){$recording;continue}
         $display=$recording|Select-Object *
         if($replayStatuses.ContainsKey([string]$recording.Id)){$display.Status=$replayStatuses[[string]$recording.Id]}
@@ -477,7 +521,7 @@ function Update-YapLoqDashboard($state) {
     })
     # Compare displayed fields only. Do not serialize brush objects or rebuild/restart
     # entry animations on every playback poll (elapsed time is not preview content).
-    $signature=([string]$live.Count)+'|'+(@($items|ForEach-Object{'{0}|{1}|{2}|{3}|{4}|{5}|{6}|{7}' -f $_.Id,$_.Status,$_.Text,$_.Accent,$_.IconGeometry,$_.HasAudio,$_.SavedPath,$_.PreviewKind}) -join ';')
+    $signature=([string]$live.Count)+'|'+(@($items|ForEach-Object{'{0}|{1}|{2}|{3}|{4}|{5}|{6}|{7}|{8}' -f $_.Id,$_.Status,$_.Text,$_.Accent,$_.IconGeometry,$_.HasAudio,$_.SavedPath,$_.PreviewKind,$_.ChildrenSignature}) -join ';')
     if($signature -eq $script:dashboardQueueSignature){return}
     $script:dashboardQueueSignature=$signature
     $script:dashboardUpcoming.Children.Clear()
@@ -499,11 +543,12 @@ function Update-YapLoqDashboard($state) {
         }
         $menu=[Windows.Controls.ContextMenu]::new();$menu.Tag=$item
         $actions=if($item.PreviewKind -eq 'History'){@(@('Replay','replay'),@('Save audio','save'),@('Show audio file','show'),@('Copy message','copy'),@('Edit voice','edit'),@('Open Queue','queue'))}else{@(@('Move up','up'),@('Move down','down'),@('Remove','remove'),@('Copy message','copy'),@('Edit voice','edit'),@('Open Queue','queue'))}
+        if($item.IsGroup){$actions=if($item.PreviewKind -eq 'History'){@(@('Replay message','replay'),@('Copy message','copy'),@('Open Queue','queue'))}else{@(@('Copy message','copy'),@('Open Queue','queue'))}}
         if($item.Platform -and $item.UserId){$actions+=,@('Set viewer default to this voice','viewer-default')}
         foreach($action in $actions){$option=[Windows.Controls.MenuItem]::new();$option.Header=$action[0];$option.Tag=[pscustomobject]@{Action=$action[1];Recording=$item};$option.Add_Click({param($sender,$e)Invoke-YapLoqPreviewAction $sender.Tag.Action $sender.Tag.Recording});[void]$menu.Items.Add($option)}
-        $menu.Add_Opened({param($sender,$e)foreach($option in $sender.Items){$recording=$option.Tag.Recording;$option.IsEnabled=if($option.Tag.Action -in @('replay','save','show')){[bool]$recording.HasAudio}elseif($option.Tag.Action -in @('up','down','remove')){$recording.Id -ne $script:lastPlaybackState.current.id}elseif($option.Tag.Action -eq 'edit'){@($PlayVoiceList.Tag|Where-Object{$_.Name -eq $recording.Alias}).Count -gt 0}else{$true}}})
+        $menu.Add_Opened({param($sender,$e)foreach($option in $sender.Items){$recording=$option.Tag.Recording;$option.IsEnabled=if($option.Tag.Action -eq 'replay'){$recording.HasAudio -and $recording.Status -notin @('Queued','Playing','Paused','Generating','Waiting for action')}elseif($option.Tag.Action -in @('save','show')){[bool]$recording.HasAudio}elseif($option.Tag.Action -in @('up','down','remove')){$recording.Id -ne $script:lastPlaybackState.current.id}elseif($option.Tag.Action -eq 'edit'){@($PlayVoiceList.Tag|Where-Object{$_.Name -eq $recording.Alias}).Count -gt 0}else{$true}}})
         $row.ContextMenu=$menu
-        [void]$script:dashboardUpcoming.Children.Add($row)
+        if($item.IsGroup){[void]$script:dashboardUpcoming.Children.Add((New-DashboardMessageGroup $row $item))}else{[void]$script:dashboardUpcoming.Children.Add($row)}
     }
 }
 
@@ -865,10 +910,10 @@ function Get-YapLoqQueueGroups($Rows) {
         $playing=@($parts|Where-Object{$_.Status -in @('Playing','Paused','Waiting for action','Generating','Queued','Ready')})
         $group.Status=if($playing.Count){$playing[0].Status}elseif(@($parts|Where-Object{$_.Status -in @('Error','Failed')}).Count){'Failed'}elseif(@($parts|Where-Object{$_.Status -in @('Skipped','Cancelled')}).Count){'Cancelled'}else{'Finished'}
         $group|Add-Member NoteProperty HasAudio (@($parts|Where-Object{-not $_.HasAudio}).Count -eq 0) -Force
-        $group.AudioLabel='';$group.AudioPath='';$group.SavedPath=''
+        foreach($property in @('AudioLabel','AudioPath','SavedPath')){$group|Add-Member NoteProperty $property '' -Force}
         $group|Add-Member NoteProperty IsGroup $true -Force
         $group|Add-Member NoteProperty Children $parts -Force
-        $group|Add-Member NoteProperty ChildrenSignature (($parts|ForEach-Object{'{0}|{1}|{2}|{3}' -f $_.Id,$_.Status,$_.HasAudio,$_.Text}) -join ';') -Force
+        $group|Add-Member NoteProperty ChildrenSignature (($parts|ForEach-Object{'{0}|{1}|{2}|{3}|{4}|{5}|{6}' -f $_.Id,$_.Status,$_.HasAudio,$_.Text,$_.Alias,$_.Accent,$_.IconGeometry}) -join ';') -Force
         $group
     }
 }
